@@ -100,7 +100,12 @@ start_real:
 	mov ss, ax
 
 	mov esi, successfully_real_mode_msg
+        call print_string_real
+
+	mov esi, settings_up_stack
 	call print_string_real
+
+	mov rsp, stack_top
 
 	hlt
 
@@ -111,6 +116,7 @@ protected_mode_msg: db "Trying enable protected mode...", 0x0D, 0x0A, 0
 successfully_protected_mode_msg: db "Protected mode successfuly enabled!", 0x0D, 0x0A, 0
 pae_paging_msg: db "Enabling PAE paging...", 0x0D, 0x0A, 0
 real_mode_msg: db "Trying enable real mode...", 0x0D, 0x0A, 0
+settings_up_stack: db "Settings up 16 KB stack...", 0x0D, 0x0A, 0
 successfully_real_mode_msg: db "Real mode successfuly enabled!", 0x0D, 0x0A, 0
 gdt_start:
 	dq 0
@@ -130,20 +136,27 @@ gdt_data:
 	db 0x0
 gdt_end:
 gdt_descriptor:
-    dw gdt_end - gdt_start - 1
-    dd gdt_start
+	dw gdt_end - gdt_start - 1
+	dd gdt_start
 
 align 8
 
 gdt64_start:
-    dq 0
+	dq 0
 gdt64_code:
-    dq 0x00209A0000000000
+	dq 0x00209A0000000000
 gdt64_data:
-    dq 0x0000920000000000
+	dq 0x0000920000000000
 gdt64_end:
 gdt64_descriptor:
-    dw gdt64_end - gdt64_start - 1
-    dd gdt64_start
+	dw gdt64_end - gdt64_start - 1
+	dd gdt64_start
+
 
 times 10240-($-$$) db 0 ; 10 KB
+
+section .bss
+align 16
+stack_bottom:
+    resb 16384
+stack_top:
