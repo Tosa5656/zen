@@ -1,10 +1,6 @@
 bits 16
 org 0x7C00
 
-global _start
-global clear_screen
-global read_bootloader_partition
-
 section .text
 _start:
 	xor ax, ax
@@ -34,6 +30,7 @@ _start:
 	hlt
 
 %INCLUDE "io.asm"
+bits 16
 
 clear_screen:
 	pusha
@@ -82,10 +79,10 @@ disk_error:
 	cli
 	hlt
 
-BOOTLOADER_PARTITION_SIZE: equ 1 ; stage2 size in sectors
+BOOTLOADER_PARTITION_SIZE: equ 20 ; stage2 size in sectors
 boot_disk: db 0x80
 boot_msg: db "Booting ZenOS...", 0x0D, 0x0A, 0
-disk_read_msg: db "Reading bootloader stage 2 from disk", 0x0D, 0x0A, 0
+disk_read_msg: db "Reading bootloader stage 2 from disk..", 0x0D, 0x0A, 0
 successfully_disk_read_msg: db "Bootloader stage 2 successfully readed from disk. Jumping...", 0x0D, 0x0A, 0
 failed_disk_read_msg: db "Failed to read sectors from disk", 0x0D, 0x0A, 0
 
