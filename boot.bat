@@ -1,2 +1,2 @@
-qemu-system-x86_64 -fda arch/x86_64/bootloader/bootloader.bin -m 1G
+qemu-system-x86_64 -hda zen.iso -m 1G
 pause

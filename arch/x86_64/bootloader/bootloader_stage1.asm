@@ -12,6 +12,7 @@ _start:
 	cld
 
 	mov [boot_disk], dl
+	mov [0x500], dl ; Boot disk address for stage2
 
 	call clear_screen
 
@@ -29,7 +30,7 @@ _start:
 	cli
 	hlt
 
-%INCLUDE "io.asm"
+%INCLUDE "io_real.asm"
 bits 16
 
 clear_screen:
@@ -55,15 +56,9 @@ clear_screen:
 read_bootloader_partition:
 	pusha
 
-	mov ah, 0x02
-	mov al, BOOTLOADER_PARTITION_SIZE
-	mov ch, 0x00
-	mov cl, 0x02
-	mov dh, 0x00
 	mov dl, [boot_disk]
-
-	mov bx, 0x7E00
-
+	mov si, dap
+	mov ah, 0x42
 	int 0x13
 	jc disk_error
 success:
@@ -80,11 +75,18 @@ disk_error:
 	hlt
 
 BOOTLOADER_PARTITION_SIZE: equ 20 ; stage2 size in sectors
+STAGE2_LBA: equ 64 ; stage2 location (GPT entries area)
 boot_disk: db 0x80
+dap:
+	db 0x10	; DAP size
+	db 0 ; reserved
+	dw BOOTLOADER_PARTITION_SIZE ; sectors to read
+	dw 0x7E00 ; buffer offset
+	dw 0 ; buffer segment
+	dq STAGE2_LBA	; starting LBA
 boot_msg: db "Booting ZenOS...", 0x0D, 0x0A, 0
-disk_read_msg: db "Reading bootloader stage 2 from disk..", 0x0D, 0x0A, 0
-successfully_disk_read_msg: db "Bootloader stage 2 successfully readed from disk. Jumping...", 0x0D, 0x0A, 0
+disk_read_msg: db "Reading bootloader stage 2 from disk...", 0x0D, 0x0A, 0
+successfully_disk_read_msg: db "Bootloader stage 2 successfully read from disk. Jumping...", 0x0D, 0x0A, 0
 failed_disk_read_msg: db "Failed to read sectors from disk", 0x0D, 0x0A, 0
 
-times 510-($-$$) db 0
-dw 0xAA55
+times 446-($-$$) db 0
