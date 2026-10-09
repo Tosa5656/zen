@@ -9,7 +9,7 @@ MCOPY=mcopy
 IMAGE=zen.iso
 DISK_SIZE=200 # Size in megabytes
 
-all: bootloader
+all: bootloader kernel
 clean:
 	rm -rf iso/
 	rm -rf *.iso
@@ -19,7 +19,10 @@ clean:
 bootloader:
 	make -C arch/$(ARCH) bootloader
 
-image:
+kernel:
+	make -C kernel
+
+image: bootloader kernel
 	dd if=/dev/zero of=$(IMAGE) bs=1M count=$(DISK_SIZE)
 
 	$(PARTED) -s $(IMAGE) mklabel gpt
@@ -31,9 +34,11 @@ image:
 	dd if=arch/$(ARCH)/bootloader/bootloader_stage1.bin of=$(IMAGE) bs=1 count=446 conv=notrunc
 	dd if=arch/$(ARCH)/bootloader/bootloader_stage2.bin of=$(IMAGE) bs=512 seek=64 conv=notrunc
 
-	$(MFORMAT) -i $(IMAGE)@@1048576 ::
+	$(MFORMAT) -F -i $(IMAGE)@@1048576 ::
 	#$(MCOPY) -D r -i $(IMAGE)@@1048576 -s /dev/null ::/EFI
 	#$(MCOPY) -D r -i $(IMAGE)@@1048576 -s /dev/null ::/EFI/BOOT
 
 	#$(MCOPY) -i $(IMAGE)@@1048576 arch/$(ARCH)/bootloader/uefi/bootx64.efi ::/EFI/BOOT/BOOTX64.EFI
-	#$(MCOPY) -i $(IMAGE)@@1048576 kernel/kernel.bin ::/kernel.bin
+	$(MCOPY) -i $(IMAGE)@@1048576 kernel/kernel.bin ::/KERNEL.BIN
+
+.PHONY: all clean bootloader kernel image

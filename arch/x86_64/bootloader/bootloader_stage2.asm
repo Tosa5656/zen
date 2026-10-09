@@ -164,8 +164,9 @@ start_long:
 	mov esi, gpt_find_efi_partition_msg
 	call print_string_long
 
-	mov rdi, 0x477284830FC63DAF
-	mov rsi, 0xE47D47D8693D798E
+	; ESP partition GUID
+	mov rdi, 0x11D2F81FC12A7328
+	mov rsi, 0x3BC93EC9A0004BBA
 	mov rdx, efi_partition_start_lba
 	mov rcx, efi_partition_end_lba
 
@@ -177,7 +178,32 @@ start_long:
 	mov esi, successfully_gpt_find_efi_partition_msg
 	call print_string_long
 
-	jmp .exit
+	mov esi, fat32_init_msg
+	call print_string_long
+
+	mov rdi, [efi_partition_start_lba]
+	call fat32_init
+	cmp rax, 1
+	jne .fat32_error
+
+	mov esi, fat32_init_successfully_msg
+        call print_string_long
+
+	mov esi, kernel_load_msg
+	call print_string_long
+
+	mov rdi, 0x20204C454E52454B
+	mov rsi, 0x004E4942
+	mov rdx, 0x100000
+	call fat32_read_file
+
+	cmp rax, 1
+	jne .kernel_load_error
+
+	mov esi, kernel_load_successfully_msg
+	call print_string_long
+
+	jmp 0x100000
 .gpt_not_found:
 	mov esi, failed_gpt_check_msg
 	call print_string_long
@@ -194,10 +220,19 @@ start_long:
 	mov esi, failed_gpt_find_efi_partition_msg
 	call print_string_long
 	jmp .exit
+.fat32_error:
+        mov esi, fat32_init_failed_msg
+        call print_string_long
+        jmp .exit
+.kernel_load_error:
+	mov esi, kernel_load_error_msg
+	call print_string_long
+	jmp .exit
 .exit:
 	hlt
 
 %INCLUDE "gpt.asm"
+%INCLUDE "fat32.asm"
 
 section .text
 
@@ -222,6 +257,13 @@ failed_gpt_read_entries_msg: db "Failed to read GPT entries from disk!", 0x0D, 0
 gpt_find_efi_partition_msg: db "Find EFI partition in disk...", 0x0D, 0x0A, 0
 successfully_gpt_find_efi_partition_msg: db "EFI partition successfully found!", 0x0D, 0x0A, 0
 failed_gpt_find_efi_partition_msg: db "Failed to find EFI partitoin!", 0x0D, 0x0A, 0
+fat32_init_msg: db "Trying init FAT32...", 0x0D, 0x0A, 0
+fat32_init_failed_msg: db "Failed to init FAT32!", 0x0D, 0x0A, 0
+fat32_init_successfully_msg: db "FAT32 inited successfully!", 0x0D, 0x0A, 0
+kernel_load_msg: db "Reading kernel from disk...", 0x0D, 0x0A, 0
+kernel_load_error_msg: db "Failed to read kernel from disk!", 0x0D, 0x0A, 0
+kernel_load_successfully_msg: db "Kernel readed from disk successfully!", 0x0D, 0x0A, 0
+
 gdt_start:
 	dq 0
 gdt_code:
