@@ -140,12 +140,41 @@ start_long:
 	call print_string_long
 
 	mov rdi, sector_lba1
+	mov rbx, rdi	; gpt_extract_parameters reads num entries / entry size via RBX
 	call gpt_extract_parameters
 
 	cmp rax, 1
 	jne .gpt_failed_extract_parameters
 
 	mov esi, successfully_gpt_extract_parameters_msg
+	call print_string_long
+
+	; Read GPT table
+	mov esi, gpt_read_entries_msg
+	call print_string_long
+
+	call gpt_read_entries
+	cmp rax, 1
+	jne .gpt_failed_read_entries
+
+	mov esi, successfully_gpt_read_entries_msg
+	call print_string_long
+
+	;Find EFI partition
+	mov esi, gpt_find_efi_partition_msg
+	call print_string_long
+
+	mov rdi, 0x477284830FC63DAF
+	mov rsi, 0xE47D47D8693D798E
+	mov rdx, efi_partition_start_lba
+	mov rcx, efi_partition_end_lba
+
+	call gpt_find_partition
+
+	cmp rax, 1
+	jne .partition_not_found
+
+	mov esi, successfully_gpt_find_efi_partition_msg
 	call print_string_long
 
 	jmp .exit
@@ -155,6 +184,14 @@ start_long:
 	jmp .exit
 .gpt_failed_extract_parameters:
 	mov esi, failed_gpt_extract_paramters_msg
+	call print_string_long
+	jmp .exit
+.gpt_failed_read_entries:
+	mov esi, failed_gpt_read_entries_msg
+	call print_string_long
+	jmp .exit
+.partition_not_found:
+	mov esi, failed_gpt_find_efi_partition_msg
 	call print_string_long
 	jmp .exit
 .exit:
@@ -179,6 +216,12 @@ failed_gpt_check_msg: db "GPT not found on the disk!", 0x0D, 0x0A, 0
 gpt_extract_parameters_msg: db "Trying extract GPT table params...", 0x0D, 0x0A, 0
 successfully_gpt_extract_parameters_msg: db "GPT table params extracted successfully!", 0x0D, 0x0A, 0
 failed_gpt_extract_paramters_msg: db "Failed extract GPT table params!", 0x0D, 0x0A, 0
+gpt_read_entries_msg: db "Read GPT entries from disk...", 0x0D, 0x0A, 0
+successfully_gpt_read_entries_msg: db "GPT entries successfully readed from disk!", 0x0D, 0x0A, 0
+failed_gpt_read_entries_msg: db "Failed to read GPT entries from disk!", 0x0D, 0x0A, 0
+gpt_find_efi_partition_msg: db "Find EFI partition in disk...", 0x0D, 0x0A, 0
+successfully_gpt_find_efi_partition_msg: db "EFI partition successfully found!", 0x0D, 0x0A, 0
+failed_gpt_find_efi_partition_msg: db "Failed to find EFI partitoin!", 0x0D, 0x0A, 0
 gdt_start:
 	dq 0
 gdt_code:
@@ -213,10 +256,12 @@ gdt64_descriptor:
 	dw gdt64_end - gdt64_start - 1
 	dd gdt64_start
 
-
 times 10240-($-$$) db 0 ; 10 KB
 
 section .bss
+align 8
+efi_partition_start_lba: resq 1
+efi_partition_end_lba: resq 1
 align 16
 sector_lba0: resb 512
 sector_lba1: equ sector_lba0 + 512
