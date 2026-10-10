@@ -349,6 +349,7 @@ find_system_tables:
 	pop rbx
 	pop rbp
 	ret
+
 fill_boot_info:
 	push rbp
 	mov rbp, rsp
@@ -359,31 +360,31 @@ fill_boot_info:
 	mov dword [boot_info + BootInfo.size], 88
 
 	mov qword [boot_info + BootInfo.memory_map_address], memory_map_buffer
-	mov eax, [memory_map_entries_count]
+	mov eax, [memory_map_entries_rm]
 	mov [boot_info + BootInfo.memory_map_entries], rax
 
-	mov eax, [vbe_buffer + 40]
+	mov eax, [vbe_buffer_rm + 40]
 	mov [boot_info + BootInfo.framebuffer_address], rax
 
-	movzx eax, word [vbe_buffer + 18]
+	movzx eax, word [vbe_buffer_rm + 18]
 	mov [boot_info + BootInfo.framebuffer_width], eax
 
-	movzx eax, word [vbe_buffer + 20]
+	movzx eax, word [vbe_buffer_rm + 20]
 	mov [boot_info + BootInfo.framebuffer_height], eax
 
-	movzx eax, word [vbe_buffer + 16]
+	movzx eax, word [vbe_buffer_rm + 16]
 	mov [boot_info + BootInfo.framebuffer_pitch], eax
 
-	mov al, [vbe_buffer + 25]
+	mov al, [vbe_buffer_rm + 25]
 	mov [boot_info + BootInfo.framebuffer_bpp], al
 
-	mov al, [vbe_buffer + 31]
+	mov al, [vbe_buffer_rm + 32]
 	mov [boot_info + BootInfo.framebuffer_red_mask_shift], al
 
-	mov al, [vbe_buffer + 33]
+	mov al, [vbe_buffer_rm + 34]
 	mov [boot_info + BootInfo.framebuffer_green_mask_shift], al
 
-	mov al, [vbe_buffer + 35]
+	mov al, [vbe_buffer_rm + 36]
 	mov [boot_info + BootInfo.framebuffer_blue_mask_shift], al
 
 	pop rcx
@@ -430,6 +431,8 @@ fat32_init_successfully_msg: db "FAT32 inited successfully!", 0x0D, 0x0A, 0
 kernel_load_msg: db "Reading kernel from disk...", 0x0D, 0x0A, 0
 kernel_load_error_msg: db "Failed to read kernel from disk!", 0x0D, 0x0A, 0
 kernel_load_successfully_msg: db "Kernel readed from disk successfully!", 0x0D, 0x0A, 0
+vbe_buffer_rm: equ 0x0CBC
+memory_map_entries_rm: equ 0x0CB8
 
 gdt_start:
 	dq 0

@@ -1,4 +1,4 @@
 - Fully page tables(get bios memory map for this)[-]
-- Create boot_info structure for kernel [-]
+- Create boot_info structure for kernel [+]
 - Parse GPT disk table, find kernel partition, load kernel.bin from FAT32 [+]
-- Jump to kernel with boot_info in args[-]
+- Jump to kernel with boot_info in args[+]
