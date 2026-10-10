@@ -283,6 +283,11 @@ start_long:
 	mov esi, kernel_load_successfully_msg
 	call print_string_long_fb
 
+	call find_system_tables
+
+	call fill_boot_info
+
+	mov rdi, boot_info
 	jmp 0x100000
 .gpt_not_found:
 	mov esi, failed_gpt_check_msg
@@ -312,6 +317,79 @@ start_long:
 	cli
 	hlt
 	jmp .exit
+find_system_tables:
+	push rbp
+	mov rbp, rsp
+	push rbx
+	push rcx
+	push rax
+
+	mov rbx, 0x000E0000
+.scan_loop:
+	cmp rbx, 0x000FFFFF
+	jae .done
+
+	mov rax, [rbx]
+	mov rcx, 0x2052545020445352
+	cmp rax, rcx
+	jne .check_smbios
+	mov [boot_info + BootInfo.acpi_rsdp_address], rbx
+.check_smbios:
+	mov eax, [rbx]
+	and eax, 0x00FFFFFF
+	cmp eax, 0x004D535F
+	jne .next
+	mov [boot_info + BootInfo.smbios_address], rbx
+.next:
+	add rbx, 16
+	jmp .scan_loop
+.done:
+	pop rax
+	pop rcx
+	pop rbx
+	pop rbp
+	ret
+fill_boot_info:
+	push rbp
+	mov rbp, rsp
+	push rax
+	push rcx
+
+	mov dword [boot_info + BootInfo.magic], 0xCAFEBABE
+	mov dword [boot_info + BootInfo.size], 88
+
+	mov qword [boot_info + BootInfo.memory_map_address], memory_map_buffer
+	mov eax, [memory_map_entries_count]
+	mov [boot_info + BootInfo.memory_map_entries], rax
+
+	mov eax, [vbe_buffer + 40]
+	mov [boot_info + BootInfo.framebuffer_address], rax
+
+	movzx eax, word [vbe_buffer + 18]
+	mov [boot_info + BootInfo.framebuffer_width], eax
+
+	movzx eax, word [vbe_buffer + 20]
+	mov [boot_info + BootInfo.framebuffer_height], eax
+
+	movzx eax, word [vbe_buffer + 16]
+	mov [boot_info + BootInfo.framebuffer_pitch], eax
+
+	mov al, [vbe_buffer + 25]
+	mov [boot_info + BootInfo.framebuffer_bpp], al
+
+	mov al, [vbe_buffer + 31]
+	mov [boot_info + BootInfo.framebuffer_red_mask_shift], al
+
+	mov al, [vbe_buffer + 33]
+	mov [boot_info + BootInfo.framebuffer_green_mask_shift], al
+
+	mov al, [vbe_buffer + 35]
+	mov [boot_info + BootInfo.framebuffer_blue_mask_shift], al
+
+	pop rcx
+	pop rax
+	pop rbp
+	ret
 
 %INCLUDE "gpt.asm"
 %INCLUDE "fat32.asm"
