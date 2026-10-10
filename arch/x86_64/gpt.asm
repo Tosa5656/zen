@@ -7,6 +7,15 @@ global gpt_extract_parameters
 
 %INCLUDE "io.asm"
 
+section .bss
+align 8
+gpt_partition_table_lba: resq 1
+gpt_num_entries: resd 1
+gpt_entry_size: resd 1
+align 16
+gpt_entries_buffer: resb 16384
+
+section .text
 struc GptHeader
     .signature: resq 1
     .revision: resd 1
@@ -183,11 +192,4 @@ gpt_find_partition:
 	pop rbp
 	ret
 
-section .bss
-align 8
-gpt_partition_table_lba: resq 1
-gpt_num_entries: resd 1
-gpt_entry_size: resd 1
-align 16
-gpt_entries_buffer: resb 16384
 %endif

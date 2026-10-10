@@ -3,7 +3,20 @@
 
 bits 64
 
+section .bss
+align 8
+fat32_start_lba: resq 1
+fat32_fat_lba: resq 1
+fat32_data_lba: resq 1
+fat32_reserved_sectors: resd 1
+fat32_sectors_per_fat: resd 1
+fat32_sec_per_cluster: resd 1
+fat32_root_cluster: resd 1
+kernel_current_cluster: resd 1
+align 16
+fat32_scratch_buffer: resb 4096
 
+section .text
 struc Fat32Vbr
 	.jmp_code: resb 3
 	.oem_name: resb 8
@@ -211,16 +224,4 @@ cluster_to_lba:
 	add rax, [fat32_data_lba]
 	ret
 
-section .bss
-align 8
-fat32_start_lba: resq 1
-fat32_fat_lba: resq 1
-fat32_data_lba: resq 1
-fat32_reserved_sectors: resd 1
-fat32_sectors_per_fat: resd 1
-fat32_sec_per_cluster: resd 1
-fat32_root_cluster: resd 1
-kernel_current_cluster: resd 1
-align 16
-fat32_scratch_buffer: resb 4096
 %endif

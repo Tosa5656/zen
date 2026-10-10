@@ -1,3 +1,5 @@
+%define FB_CONSOLE 1
+
 bits 16
 org 0x7E00
 
@@ -6,17 +8,51 @@ _start:
 	mov si, boot_stage2_msg
 	call print_string
 
+	; Getting memory map
+	mov si, get_memory_map_msg
+	call print_string
+
+	mov di, memory_map_buffer
+	call get_memory_map
+
+	test ax, ax
+	jz .get_memory_map_failed
+
+	movzx eax, ax
+	mov [memory_map_entries_count], eax
+
+	mov si, successfully_get_memory_map_msg
+	call print_string
+
+	; Init graphics
+	mov si, init_graphics_msg
+	call print_string
+
+	mov ax, 1024
+	mov bx, 768
+	mov cl, 32
+	mov si, vbe_buffer
+	call init_graphics
+
+	test ax, ax
+	jz .init_graphics_failed
+
+	; Set up the linear framebuffer text console
+	call init_framebuffer
+	call enable_unreal_mode
+
+	mov si, successfully_init_graphics_msg
+	call print_string_real_fb
+
 	cli
 
 	; Set up the GDT
 	mov si, gdt_init_msg
-	call print_string
-
-	lgdt [gdt_descriptor]
+	call print_string_real_fb
 
 	; Enabling protected mode
 	mov si, protected_mode_msg
-	call print_string
+	call print_string_real_fb
 
 	mov ah, 0x03
 	xor bh, bh
@@ -33,8 +69,22 @@ _start:
 	mov bx, sector_lba0
 	int 0x13
 	jnc .gpt_read_ok
+	jmp .halt
+.get_memory_map_failed:
+	mov si, failed_get_memory_map_msg
+	call print_string
+	jmp .halt
+.init_graphics_failed:
+	mov si, failed_init_graphics_msg
+	call print_string
+	jmp .halt
+.halt:
+	cli
 	hlt
+	jmp .halt
 .gpt_read_ok:
+	lgdt [gdt_descriptor]
+
 	mov eax, cr0
 	or eax, 1
 	mov cr0, eax
@@ -42,6 +92,9 @@ _start:
 	jmp 0x08:start_protected
 
 %INCLUDE "io_real.asm"
+%INCLUDE "memory.asm"
+%INCLUDE "graphics.asm"
+%INCLUDE "framebuffer.asm"
 
 %INCLUDE "io.asm"
 
@@ -63,7 +116,7 @@ start_protected:
 	mov [video_cursor], edi
 
 	mov ebx, successfully_protected_mode_msg
-	call print_string_protected
+	call print_string_protected_fb
 
 	; PAE Paging
 	mov eax, 0x2003
@@ -75,9 +128,36 @@ start_protected:
 	mov eax, 0x00000083
 	mov [0x3000], eax
 
+	mov edi, 0x4000
+	xor eax, eax
+	mov ecx, 1024
+	rep stosd
+
+	mov eax, 0x4003
+	mov ecx, [fb_addr]
+	shr ecx, 30
+	mov [0x2000 + ecx*8], eax
+
+	mov eax, [fb_addr]
+	mov edx, eax
+	shr edx, 21
+	and edx, 0x1FF
+	and eax, 0xFFE00000
+	or eax, 0x83
+	mov ecx, [fb_height]
+	imul ecx, [fb_pitch]
+	shr ecx, 21
+	inc ecx
+.map_fb_pages:
+	mov [0x4000 + edx*8], eax
+	add eax, 0x200000
+	inc edx
+	dec ecx
+	jnz .map_fb_pages
+
 	; Enabling PAE paging
 	mov ebx, pae_paging_msg
-	call print_string_protected
+	call print_string_protected_fb
 
 	mov eax, 0x1000
 	mov cr3, eax
@@ -87,7 +167,7 @@ start_protected:
 
 	; Enabling long mode
 	mov ebx, long_mode_msg
-	call print_string_protected
+	call print_string_protected_fb
 
 	mov ecx, 0xC0000080
 	rdmsr
@@ -114,16 +194,16 @@ start_long:
 	mov ss, ax
 
 	mov esi, successfully_long_mode_msg
-	call print_string_long
+	call print_string_long_fb
 
 	mov esi, setting_up_stack
-	call print_string_long
+	call print_string_long_fb
 
 	mov rsp, stack_top
 
 	; Find the GPT on the disk
 	mov esi, gpt_check_msg
-	call print_string_long
+	call print_string_long_fb
 
 	mov rdi, sector_lba0
 	mov rsi, sector_lba1
@@ -133,36 +213,36 @@ start_long:
 	jne .gpt_not_found
 
 	mov esi, successfully_gpt_check_msg
-	call print_string_long
+	call print_string_long_fb
 
 	; Get partitions table info
 	mov esi, gpt_extract_parameters_msg
-	call print_string_long
+	call print_string_long_fb
 
 	mov rdi, sector_lba1
-	mov rbx, rdi	; gpt_extract_parameters reads num entries / entry size via RBX
+	mov rbx, rdi
 	call gpt_extract_parameters
 
 	cmp rax, 1
 	jne .gpt_failed_extract_parameters
 
 	mov esi, successfully_gpt_extract_parameters_msg
-	call print_string_long
+	call print_string_long_fb
 
 	; Read GPT table
 	mov esi, gpt_read_entries_msg
-	call print_string_long
+	call print_string_long_fb
 
 	call gpt_read_entries
 	cmp rax, 1
 	jne .gpt_failed_read_entries
 
 	mov esi, successfully_gpt_read_entries_msg
-	call print_string_long
+	call print_string_long_fb
 
 	;Find EFI partition
 	mov esi, gpt_find_efi_partition_msg
-	call print_string_long
+	call print_string_long_fb
 
 	; ESP partition GUID
 	mov rdi, 0x11D2F81FC12A7328
@@ -176,10 +256,10 @@ start_long:
 	jne .partition_not_found
 
 	mov esi, successfully_gpt_find_efi_partition_msg
-	call print_string_long
+	call print_string_long_fb
 
 	mov esi, fat32_init_msg
-	call print_string_long
+	call print_string_long_fb
 
 	mov rdi, [efi_partition_start_lba]
 	call fat32_init
@@ -187,10 +267,10 @@ start_long:
 	jne .fat32_error
 
 	mov esi, fat32_init_successfully_msg
-        call print_string_long
+        call print_string_long_fb
 
 	mov esi, kernel_load_msg
-	call print_string_long
+	call print_string_long_fb
 
 	mov rdi, 0x20204C454E52454B
 	mov rsi, 0x004E4942
@@ -201,43 +281,52 @@ start_long:
 	jne .kernel_load_error
 
 	mov esi, kernel_load_successfully_msg
-	call print_string_long
+	call print_string_long_fb
 
 	jmp 0x100000
 .gpt_not_found:
 	mov esi, failed_gpt_check_msg
-	call print_string_long
+	call print_string_long_fb
 	jmp .exit
 .gpt_failed_extract_parameters:
 	mov esi, failed_gpt_extract_paramters_msg
-	call print_string_long
+	call print_string_long_fb
 	jmp .exit
 .gpt_failed_read_entries:
 	mov esi, failed_gpt_read_entries_msg
-	call print_string_long
+	call print_string_long_fb
 	jmp .exit
 .partition_not_found:
 	mov esi, failed_gpt_find_efi_partition_msg
-	call print_string_long
+	call print_string_long_fb
 	jmp .exit
 .fat32_error:
         mov esi, fat32_init_failed_msg
-        call print_string_long
+        call print_string_long_fb
         jmp .exit
 .kernel_load_error:
 	mov esi, kernel_load_error_msg
-	call print_string_long
+	call print_string_long_fb
 	jmp .exit
 .exit:
+	cli
 	hlt
+	jmp .exit
 
 %INCLUDE "gpt.asm"
 %INCLUDE "fat32.asm"
+%INCLUDE "boot_info.asm"
 
 section .text
 
 cursor_row: db 0
 boot_stage2_msg: db "Bootloader stage 2 successfully loaded!", 0x0D, 0x0A, 0
+get_memory_map_msg: db "Getting memory map from BIOS...", 0x0D, 0x0A, 0
+successfully_get_memory_map_msg: db "Memory map successfully get from BIOS!", 0x0D, 0x0A, 0
+failed_get_memory_map_msg: db "Failed to get memory map from BIOS!", 0x0D, 0x0A, 0
+init_graphics_msg: db "Initing graphics...", 0x0D, 0x0A, 0
+successfully_init_graphics_msg: db "Graphics successfully inited!", 0x0D, 0x0A, 0
+failed_init_graphics_msg: db "Failed to init graphics!", 0x0D, 0x0A, 0
 gdt_init_msg: db "Initializing the GDT...", 0x0D, 0x0A, 0
 protected_mode_msg: db "Trying to enable protected mode...", 0x0D, 0x0A, 0
 successfully_protected_mode_msg: db "Protected mode successfully enabled!", 0x0D, 0x0A, 0
@@ -280,6 +369,13 @@ gdt_data:
 	db 10010010b
 	db 11001111b
 	db 0x0
+gdt_code16:
+	dw 0xffff
+	dw 0x0
+	db 0x0
+	db 10011010b
+	db 00000000b
+	db 0x0
 gdt_end:
 gdt_descriptor:
 	dw gdt_end - gdt_start - 1
@@ -298,6 +394,8 @@ gdt64_descriptor:
 	dw gdt64_end - gdt64_start - 1
 	dd gdt64_start
 
+%INCLUDE "font.asm"
+
 times 10240-($-$$) db 0 ; 10 KB
 
 section .bss
@@ -307,6 +405,10 @@ efi_partition_end_lba: resq 1
 align 16
 sector_lba0: resb 512
 sector_lba1: equ sector_lba0 + 512
+boot_info: resb 88
+memory_map_buffer: resb 4096
+memory_map_entries_count: resd 1
+vbe_buffer: resb 512
 stack_bottom:
     resb 16384
 stack_top:
