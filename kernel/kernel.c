@@ -2,6 +2,9 @@
 #include "memory.h"
 #include "serial.h"
 
+extern uint8_t _kernel_start[];
+extern uint8_t _kernel_end[];
+
 static void dump_boot_info(const boot_info_t *info)
 {
 	if (info == 0)
@@ -31,6 +34,25 @@ void kmain(boot_info_t *boot_info)
 	serial_init();
 	dump_boot_info(boot_info);
 
-	find_maximum_physical_memory(boot_info);
+	uint64_t kernel_start_physical = (uint64_t)_kernel_start;
+	uint64_t kernel_end_physical = (uint64_t)_kernel_end;
+	uint64_t kernel_size = kernel_end_physical - kernel_start_physical;
+
+	serial_field("Kernel start physical ", kernel_start_physical);
+	serial_field("Kernel end physical ", kernel_end_physical);
+	serial_field("Kernel size in bytes ", kernel_size);
+
 	physical_memory_manager_init(boot_info);
+
+	uint64_t test_alloc1 = physical_memory_manager_alloc_page();
+	uint64_t test_alloc2 = physical_memory_manager_alloc_page();
+	uint64_t test_alloc3 = physical_memory_manager_alloc_page();
+
+	serial_field("Test alloc #1 address ", test_alloc1);
+	serial_field("Test alloc #2 address ", test_alloc2);
+	serial_field("Test alloc #3 address ", test_alloc3);
+
+	physical_memory_manager_free_page(test_alloc1);
+	physical_memory_manager_free_page(test_alloc2);
+	physical_memory_manager_free_page(test_alloc3);
 }

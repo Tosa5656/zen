@@ -4,7 +4,7 @@
 bits 64
 
 section .bss
-align 8
+alignb 8
 fat32_start_lba: resq 1
 fat32_fat_lba: resq 1
 fat32_data_lba: resq 1
@@ -13,7 +13,7 @@ fat32_sectors_per_fat: resd 1
 fat32_sec_per_cluster: resd 1
 fat32_root_cluster: resd 1
 kernel_current_cluster: resd 1
-align 16
+alignb 16
 fat32_scratch_buffer: resb 4096
 
 section .text

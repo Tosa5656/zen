@@ -8,11 +8,11 @@ global gpt_extract_parameters
 %INCLUDE "io.asm"
 
 section .bss
-align 8
+alignb 8
 gpt_partition_table_lba: resq 1
 gpt_num_entries: resd 1
 gpt_entry_size: resd 1
-align 16
+alignb 16
 gpt_entries_buffer: resb 16384
 
 section .text

@@ -3,7 +3,7 @@
 bits 16
 
 section .bss
-align 16
+alignb 16
 vbe_info_block: resb 512
 vbe_mode_info:  resb 512
 gfx_width:      resw 1

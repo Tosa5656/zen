@@ -92,13 +92,13 @@ _start:
 	jmp 0x08:start_protected
 
 section .bss
-align 16
+alignb 16
 memory_map_buffer: resb 4096
 memory_map_entries_count: resd 1
-align 16
+alignb 16
 vbe_buffer: resb 512
-align 16
-sector_lba0: resb 1024 ; MBR + GPT header
+alignb 16
+sector_lba0: resb 1024
 sector_lba1: equ sector_lba0 + 512
 boot_info: resb 88
 
@@ -380,7 +380,7 @@ fill_boot_info:
 	push rax
 	push rcx
 
-	mov dword [boot_info + BootInfo.magic], 0xCAFEBABE
+	mov dword [boot_info + BootInfo.magic], 0xD480A6
 	mov dword [boot_info + BootInfo.size], 88
 
 	mov qword [boot_info + BootInfo.memory_map_address], memory_map_buffer
@@ -502,10 +502,10 @@ gdt64_descriptor:
 times 10240-($-$$) db 0 ; 10 KB
 
 section .bss
-align 8
+alignb 8
 efi_partition_start_lba: resq 1
 efi_partition_end_lba: resq 1
-align 16
+alignb 16
 stack_bottom:
     resb 16384
 stack_top:
