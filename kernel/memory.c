@@ -116,9 +116,9 @@ void physical_memory_manager_init(const boot_info_t *info)
 	if (total_pages % 8 != 0) physical_memory_manager_bitmap_size++;
 
 	uint64_t bitmap_physical_address = 0;
-	for (uint64_t i = 0; i < info->memory_map_entries; i++)
+	for(uint64_t i = 0; i < info->memory_map_entries; i++)
 	{
-		if (memory_map[i].type != MEMORY_TYPE_USABLE)
+		if(memory_map[i].type != MEMORY_TYPE_USABLE)
 		{
 			continue;
 		}
@@ -126,14 +126,15 @@ void physical_memory_manager_init(const boot_info_t *info)
 		uint64_t region_start = memory_map[i].base_address;
 		uint64_t region_end = region_start + memory_map[i].length;
 
-		if (PHYSICAL_MEMORY_MANAGER_BITMAP_BASE >= region_start && PHYSICAL_MEMORY_MANAGER_BITMAP_BASE + physical_memory_manager_bitmap_size <= region_end)
+		if(PHYSICAL_MEMORY_MANAGER_BITMAP_BASE >= region_start && 
+		   PHYSICAL_MEMORY_MANAGER_BITMAP_BASE + physical_memory_manager_bitmap_size <= region_end)
 		{
 			bitmap_physical_address = PHYSICAL_MEMORY_MANAGER_BITMAP_BASE;
 			break;
 		}
 	}
 
-	if (bitmap_physical_address == 0)
+	if(bitmap_physical_address == 0)
 	{
 		serial_write("Could not find free RAM for PMM Bitmap!\n");
 		return;
@@ -152,10 +153,8 @@ void physical_memory_manager_init(const boot_info_t *info)
 	}
 
 	uint64_t kernel_size = (uint64_t)_kernel_end - (uint64_t)_kernel_start;
+	virtual_memory_manager_init(info, max_physical_address, kernel_size);
 
-	virtual_memory_manager_init(info, physical_memory_manager_get_max_ram(info), kernel_size);
-
-	bitmap_physical_address = (uint64_t)physical_memory_manager_bitmap;
 	physical_memory_manager_bitmap = (uint8_t*)(bitmap_physical_address + KERNEL_PHYSICAL_MAP_BASE);
 
 	for (uint64_t i = 0; i < info->memory_map_entries; i++)
@@ -187,7 +186,7 @@ void physical_memory_manager_init(const boot_info_t *info)
 	physical_memory_manager_lock_region((uint64_t)info, info->size);
 	physical_memory_manager_lock_region(info->memory_map_address, info->memory_map_entries * sizeof(memory_map_entry_t));
 
-	serial_write("PMM inited!\r\n");
+	serial_write("PMM inited successfully!\r\n");
 }
 
 void virtual_memory_manager_map_page(uint64_t virt, uint64_t physical, uint64_t flags)

@@ -1,6 +1,7 @@
 #include "boot_info.h"
 #include "memory.h"
 #include "serial.h"
+#include <idt.h>
 
 extern uint8_t _kernel_start[];
 extern uint8_t _kernel_end[];
@@ -55,4 +56,11 @@ void kmain(boot_info_t *boot_info)
 	physical_memory_manager_free_page(test_alloc1);
 	physical_memory_manager_free_page(test_alloc2);
 	physical_memory_manager_free_page(test_alloc3);
+
+	idt_init();
+
+	volatile int a = 5;
+	volatile int b = 0;
+	volatile int c = a / b;
+	(void)c;
 }
