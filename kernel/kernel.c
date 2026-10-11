@@ -1,6 +1,7 @@
 #include "boot_info.h"
 #include "memory.h"
 #include "serial.h"
+#include "timer.h"
 #include <idt.h>
 
 extern uint8_t _kernel_start[];
@@ -58,4 +59,10 @@ void kmain(boot_info_t *boot_info)
 	physical_memory_manager_free_page(test_alloc3);
 
 	idt_init();
+
+	while(1)
+	{
+		serial_write("1 one second.\r\n");
+		sleep(1000);
+	}
 }

@@ -1,6 +1,7 @@
 #include "idt.h"
 #include "serial.h"
 #include "pic.h"
+#include "timer.h"
 #include "io.h"
 
 __attribute__((aligned(4096))) idt_entry_t idt_table[256] = {0};
@@ -134,6 +135,8 @@ void idt_init(void)
 
 	pic_remap();
 
+	timer_init(100);
+
 	uint8_t irq_flags = IDT_TA_PRESENT | IDT_TA_DESCRIPTOR_DPL0 | IDT_TA_INTERRUPT_GATE;
 
 	void (*irq_stubs[16])(void) =
@@ -159,7 +162,7 @@ void irq_handler(cpu_registers_t* registers)
 
 	if (irq_number == 0)
 	{
-
+		timer_handler();
 	}
 	else if (irq_number == 1)
 	{
@@ -175,9 +178,5 @@ void irq_handler(cpu_registers_t* registers)
 		serial_write("\r\n");
 	}
 
-	if (irq_number >= 8)
-	{
-		outb(PIC2_COMMAND, PIC_EOI);
-	}
-	outb(PIC1_COMMAND, PIC_EOI);
+	pic_send_eoi(irq_number);
 }
