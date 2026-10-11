@@ -1,5 +1,7 @@
 #include "idt.h"
 #include "serial.h"
+#include "pic.h"
+#include "io.h"
 
 __attribute__((aligned(4096))) idt_entry_t idt_table[256] = {0};
 idt_ptr_t idt_pointer;
@@ -39,6 +41,23 @@ extern void isr29();
 extern void isr30();
 extern void isr31();
 
+extern void irq0();
+extern void irq1();
+extern void irq2();
+extern void irq3();
+extern void irq4();
+extern void irq5();
+extern void irq6();
+extern void irq7();
+extern void irq8();
+extern void irq9();
+extern void irq10();
+extern void irq11();
+extern void irq12();
+extern void irq13();
+extern void irq14();
+extern void irq15();
+
 static const char* exception_messages[] =
 {
     "Division By Zero", "Debug", "Non-Maskable Interrupt", "Breakpoint",
@@ -64,23 +83,23 @@ void idt_set_gate(uint8_t vector, void (*handler)(), uint8_t type_attributes)
 	idt_table[vector].reserved = 0;
 }
 
-void exception_handler(cpu_registers_t* regs)
+void exception_handler(cpu_registers_t* registers)
 {
 	serial_write("\r\n!!! KERNEL PANIC !!!\r\n");
-	if (regs->interrupt_number < 32)
+	if (registers->interrupt_number < 32)
 	{
 		serial_write("Exception: ");
-		serial_write(exception_messages[regs->interrupt_number]);
+		serial_write(exception_messages[registers->interrupt_number]);
 		serial_write("\r\n");
 	}
 
-	serial_field("Interrupt vector", regs->interrupt_number);
-	serial_field("Error code", regs->error_code);
-	serial_field("Instruction RIP" , regs->rip);
-	serial_field("Code segment CS ", regs->cs);
-	serial_field("Stack pointer RSP", regs->rsp);
+	serial_field("Interrupt vector", registers->interrupt_number);
+	serial_field("Error code", registers->error_code);
+	serial_field("Instruction RIP" , registers->rip);
+	serial_field("Code segment CS ", registers->cs);
+	serial_field("Stack pointer RSP", registers->rsp);
 
-	if (regs->interrupt_number == 14)
+	if (registers->interrupt_number == 14)
 	{
 		uint64_t cr2_val;
 		__asm__ volatile("mov %%cr2, %0" : "=r"(cr2_val));
@@ -113,7 +132,52 @@ void idt_init(void)
 		idt_set_gate(i, isr_stubs[i], flags);
 	}
 
+	pic_remap();
+
+	uint8_t irq_flags = IDT_TA_PRESENT | IDT_TA_DESCRIPTOR_DPL0 | IDT_TA_INTERRUPT_GATE;
+
+	void (*irq_stubs[16])(void) =
+	{
+		irq0, irq1, irq2, irq3, irq4, irq5, irq6, irq7, irq8,
+		irq9, irq10, irq11, irq12, irq13, irq14, irq15
+	};
+	for (uint8_t i = 0; i < 16; i++)
+	{
+		idt_set_gate(i + 32, irq_stubs[i], irq_flags);
+	}
+
 	load_idt((uint64_t)&idt_pointer);
 
-	serial_write("IDT loaded!\r\n");
+	__asm__ volatile("sti");
+
+	serial_write("IDT loaded and interrupts enabled!\r\n");
+}
+
+void irq_handler(cpu_registers_t* registers)
+{
+	uint64_t irq_number = registers->interrupt_number - 32;
+
+	if (irq_number == 0)
+	{
+
+	}
+	else if (irq_number == 1)
+	{
+		uint8_t scancode = inb(0x60);
+		serial_write("Key pressed! Scancode: ");
+		serial_dec(scancode);
+		serial_write("\r\n");
+	}
+	else
+	{
+		serial_write("Unhandled IRQ: ");
+		serial_dec(irq_number);
+		serial_write("\r\n");
+	}
+
+	if (irq_number >= 8)
+	{
+		outb(PIC2_COMMAND, PIC_EOI);
+	}
+	outb(PIC1_COMMAND, PIC_EOI);
 }
