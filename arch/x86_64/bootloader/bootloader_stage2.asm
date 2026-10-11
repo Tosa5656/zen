@@ -91,6 +91,19 @@ _start:
 
 	jmp 0x08:start_protected
 
+section .bss
+align 16
+memory_map_buffer: resb 4096
+memory_map_entries_count: resd 1
+align 16
+vbe_buffer: resb 512
+align 16
+sector_lba0: resb 1024 ; MBR + GPT header
+sector_lba1: equ sector_lba0 + 512
+boot_info: resb 88
+
+section .text
+
 %INCLUDE "io_real.asm"
 %INCLUDE "memory.asm"
 %INCLUDE "graphics.asm"
@@ -125,8 +138,17 @@ start_protected:
 	mov eax, 0x3003
 	mov [0x2000], eax
 
-	mov eax, 0x00000083
-	mov [0x3000], eax
+	mov edi, 0x3000
+	xor eax, eax
+	mov ecx, 512
+.map_low_memory:
+	mov edx, eax
+	or edx, 0x83
+	mov [edi], edx
+	add eax, 0x200000
+	add edi, 8
+	dec ecx
+	jnz .map_low_memory
 
 	mov edi, 0x4000
 	xor eax, eax
@@ -162,7 +184,9 @@ start_protected:
 	mov eax, 0x1000
 	mov cr3, eax
 	mov eax, cr4
-	or eax, 1 << 5
+	; PAE (bit 5) + OSFXSR (bit 9) + OSXMMEXCPT (bit 10) so that the SSE/SSE2
+	; instructions the C compiler emits are usable in the kernel.
+	or eax, (1 << 5) | (1 << 9) | (1 << 10)
 	mov cr4, eax
 
 	; Enabling long mode
@@ -360,31 +384,31 @@ fill_boot_info:
 	mov dword [boot_info + BootInfo.size], 88
 
 	mov qword [boot_info + BootInfo.memory_map_address], memory_map_buffer
-	mov eax, [memory_map_entries_rm]
+	mov eax, [memory_map_entries_count]
 	mov [boot_info + BootInfo.memory_map_entries], rax
 
-	mov eax, [vbe_buffer_rm + 40]
+	mov eax, [vbe_buffer + 40]
 	mov [boot_info + BootInfo.framebuffer_address], rax
 
-	movzx eax, word [vbe_buffer_rm + 18]
+	movzx eax, word [vbe_buffer + 18]
 	mov [boot_info + BootInfo.framebuffer_width], eax
 
-	movzx eax, word [vbe_buffer_rm + 20]
+	movzx eax, word [vbe_buffer + 20]
 	mov [boot_info + BootInfo.framebuffer_height], eax
 
-	movzx eax, word [vbe_buffer_rm + 16]
+	movzx eax, word [vbe_buffer + 16]
 	mov [boot_info + BootInfo.framebuffer_pitch], eax
 
-	mov al, [vbe_buffer_rm + 25]
+	mov al, [vbe_buffer + 25]
 	mov [boot_info + BootInfo.framebuffer_bpp], al
 
-	mov al, [vbe_buffer_rm + 32]
+	mov al, [vbe_buffer + 32]
 	mov [boot_info + BootInfo.framebuffer_red_mask_shift], al
 
-	mov al, [vbe_buffer_rm + 34]
+	mov al, [vbe_buffer + 34]
 	mov [boot_info + BootInfo.framebuffer_green_mask_shift], al
 
-	mov al, [vbe_buffer_rm + 36]
+	mov al, [vbe_buffer + 36]
 	mov [boot_info + BootInfo.framebuffer_blue_mask_shift], al
 
 	pop rcx
@@ -431,8 +455,6 @@ fat32_init_successfully_msg: db "FAT32 inited successfully!", 0x0D, 0x0A, 0
 kernel_load_msg: db "Reading kernel from disk...", 0x0D, 0x0A, 0
 kernel_load_error_msg: db "Failed to read kernel from disk!", 0x0D, 0x0A, 0
 kernel_load_successfully_msg: db "Kernel readed from disk successfully!", 0x0D, 0x0A, 0
-vbe_buffer_rm: equ 0x0CBC
-memory_map_entries_rm: equ 0x0CB8
 
 gdt_start:
 	dq 0
@@ -484,12 +506,6 @@ align 8
 efi_partition_start_lba: resq 1
 efi_partition_end_lba: resq 1
 align 16
-sector_lba0: resb 512
-sector_lba1: equ sector_lba0 + 512
-boot_info: resb 88
-memory_map_buffer: resb 4096
-memory_map_entries_count: resd 1
-vbe_buffer: resb 512
 stack_bottom:
     resb 16384
 stack_top:

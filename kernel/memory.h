@@ -10,6 +10,7 @@
 #include "serial.h"
 
 #define PAGE_SIZE 4096
+#define PHYSICAL_MEMORY_MANAGER_BITMAP_BASE 0x400000ULL
 
 #define MEMORY_TYPE_USABLE 1
 #define MEMORY_TYPE_RESERVED 2
@@ -18,7 +19,7 @@
 #define MEMORY_TYPE_UNUSABLE 5
 #define MEMORY_TYPE_PERSISTENT 6
 
-#define KERNEL_PHYS_MAP_BASE 0xFFFF800000000000ULL
+#define KERNEL_PHYSICAL_MAP_BASE 0xFFFF800000000000ULL
 
 uint8_t* physical_memory_manager_bitmap = NULL;
 uint64_t physical_memory_manager_bitmap_size = 0;
@@ -80,16 +81,18 @@ void physical_memory_manager_init(const boot_info_t *info)
 	uint64_t bitmap_physical_address = 0;
 	for(uint64_t i = 0; i < info->memory_map_entries; i++)
 	{
-		if(memory_map[i].type == MEMORY_TYPE_USABLE)
+		if(memory_map[i].type != MEMORY_TYPE_USABLE)
 		{
-			if(memory_map[i].length >= physical_memory_manager_bitmap_size)
-			{
-				if (memory_map[i].base_address >= 0x400000 && memory_map[i].base_address < 0x8000000)
-				{
-					bitmap_physical_address = memory_map[i].base_address;
-					break;
-				}
-			}
+			continue;
+		}
+
+		uint64_t region_start = memory_map[i].base_address;
+		uint64_t region_end = region_start + memory_map[i].length;
+
+		if(PHYSICAL_MEMORY_MANAGER_BITMAP_BASE >= region_start && PHYSICAL_MEMORY_MANAGER_BITMAP_BASE + physical_memory_manager_bitmap_size <= region_end)
+		{
+			bitmap_physical_address = PHYSICAL_MEMORY_MANAGER_BITMAP_BASE;
+			break;
 		}
 	}
 
