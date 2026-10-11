@@ -15,6 +15,7 @@ clean:
 	rm -rf *.iso
 
 	make -C arch/$(ARCH) clean
+	make -C kernel clean
 
 bootloader:
 	make -C arch/$(ARCH) bootloader
