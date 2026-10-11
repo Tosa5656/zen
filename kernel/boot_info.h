@@ -5,14 +5,6 @@
 
 typedef struct
 {
-	uint64_t base_address;
-	uint64_t length;
-	uint32_t type;
-	uint32_t extended_attributes;
-} __attribute__((packed)) memory_map_entry_t;
-
-typedef struct
-{
 	uint32_t magic;
 	uint32_t size;
 	uint64_t memory_map_address;
