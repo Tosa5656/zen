@@ -1,0 +1,3 @@
+[submodule "zlibc"]
+	path = zlibc
+	url = https://github.com/Tosa5656/zlibc
