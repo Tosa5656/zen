@@ -4,6 +4,7 @@
 #include "apic.h"
 #include "timer.h"
 #include "io.h"
+#include "gdt.h"
 
 __attribute__((aligned(4096))) idt_entry_t idt_table[256] = {0};
 idt_ptr_t idt_pointer;
@@ -133,6 +134,8 @@ void idt_init(void)
 	{
 		idt_set_gate(i, isr_stubs[i], flags);
 	}
+
+	idt_table[8].ist = IST_DOUBLE_FAULT;
 
 	pic_remap();
 

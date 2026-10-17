@@ -7,7 +7,7 @@
 - base ACPI [+]
 - Allocator [-]
 - kmalloc, kfree [- -]
-- Recreate GDT + user-space segments (RPL3) [-]
+- Recreate GDT + user-space segments (RPL3) [+]
 - Per-process PML4, unmap low memory from user space [- -]
 - Syscalls (MSR LSTAR / sysret) [- -]
 - Scheduler + context switch (FPU/SSE save) [- -]

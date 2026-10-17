@@ -18,7 +18,9 @@ kernel: idt
 	$(CC) $(CFLAGS) -c timer.c -o timer.o
 	$(CC) $(CFLAGS) -c acpi.c -o acpi.o
 	$(CC) $(CFLAGS) -c apic.c -o apic.o
-	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o -o kernel.bin
+	$(CC) $(CFLAGS) -c gdt.c -o gdt.o
+	$(AS) -f elf64 gdt_flush.asm -o gdt_flush.o
+	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o gdt.o gdt_flush.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o -o kernel.bin
 
 idt:
 	make -C ../arch/$(ARCH)/ idt

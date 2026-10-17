@@ -4,6 +4,7 @@
 #include "timer.h"
 #include "acpi.h"
 #include "apic.h"
+#include "gdt.h"
 #include <idt.h>
 
 extern uint8_t _kernel_start[];
@@ -61,6 +62,8 @@ void kmain(boot_info_t *boot_info)
 	physical_memory_manager_free_page(test_alloc1);
 	physical_memory_manager_free_page(test_alloc2);
 	physical_memory_manager_free_page(test_alloc3);
+
+	gdt_init();
 
 	idt_init();
 
