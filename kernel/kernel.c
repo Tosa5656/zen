@@ -2,6 +2,8 @@
 #include "memory.h"
 #include "serial.h"
 #include "timer.h"
+#include "acpi.h"
+#include "apic.h"
 #include <idt.h>
 
 extern uint8_t _kernel_start[];
@@ -46,6 +48,8 @@ void kmain(boot_info_t *boot_info)
 
 	physical_memory_manager_init(boot_info);
 
+	acpi_init(boot_info);
+
 	uint64_t test_alloc1 = physical_memory_manager_alloc_page();
 	uint64_t test_alloc2 = physical_memory_manager_alloc_page();
 	uint64_t test_alloc3 = physical_memory_manager_alloc_page();
@@ -59,6 +63,8 @@ void kmain(boot_info_t *boot_info)
 	physical_memory_manager_free_page(test_alloc3);
 
 	idt_init();
+
+	apic_init();
 
 	while(1)
 	{

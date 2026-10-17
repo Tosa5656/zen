@@ -1,6 +1,7 @@
 #include "idt.h"
 #include "serial.h"
 #include "pic.h"
+#include "apic.h"
 #include "timer.h"
 #include "io.h"
 
@@ -178,5 +179,12 @@ void irq_handler(cpu_registers_t* registers)
 		serial_write("\r\n");
 	}
 
-	pic_send_eoi(irq_number);
+	if (apic_is_enabled())
+	{
+		apic_send_eoi();
+	}
+	else
+	{
+		pic_send_eoi(irq_number);
+	}
 }

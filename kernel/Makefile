@@ -16,7 +16,9 @@ kernel: idt
 	$(CC) $(CFLAGS) -c serial.c -o serial.o
 	$(CC) $(CFLAGS) -c pic.c -o pic.o
 	$(CC) $(CFLAGS) -c timer.c -o timer.o
-	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o -o kernel.bin
+	$(CC) $(CFLAGS) -c acpi.c -o acpi.o
+	$(CC) $(CFLAGS) -c apic.c -o apic.o
+	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o -o kernel.bin
 
 idt:
 	make -C ../arch/$(ARCH)/ idt

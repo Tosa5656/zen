@@ -12,6 +12,8 @@
 #define PAGE_PRESENT (1ULL << 0)
 #define PAGE_WRITABLE (1ULL << 1)
 #define PAGE_USER (1ULL << 2)
+#define PAGE_WRITE_THROUGH (1ULL << 3)
+#define PAGE_CACHE_DISABLE (1ULL << 4)
 #define PAGE_HUGE (1ULL << 7)
 #define PHYSICAL_MEMORY_MANAGER_BITMAP_BASE 0x400000ULL
 
@@ -46,6 +48,11 @@ extern uint64_t total_pages;
 extern uint64_t boot_alloc_current;
 extern __attribute__((aligned(4096))) pml4_table_t kernel_pml4;
 
+static inline void *physical_to_virtual(uint64_t physical)
+{
+	return (void *)(physical + KERNEL_PHYSICAL_MAP_BASE);
+}
+
 void boot_alloc_init(void);
 uint64_t allocate_boot_page(void);
 
@@ -53,6 +60,8 @@ uint64_t physical_memory_manager_get_max_ram(const boot_info_t *info);
 void physical_memory_manager_set_page_used(uint64_t page_index);
 void physical_memory_manager_set_page_free(uint64_t page_index);
 void physical_memory_manager_lock_region(uint64_t physical_address, uint64_t size);
+void physical_memory_manager_free_region(uint64_t physical_address, uint64_t size);
+void physical_memory_manager_free_acpi_reclaimable(const boot_info_t *info);
 uint64_t physical_memory_manager_alloc_page(void);
 void physical_memory_manager_free_page(uint64_t physical_address);
 void physical_memory_manager_init(const boot_info_t *info);

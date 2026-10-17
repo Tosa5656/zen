@@ -346,32 +346,46 @@ find_system_tables:
 	mov rbp, rsp
 	push rbx
 	push rcx
+	push rdx
 	push rax
 
+	movzx ebx, word [0x40E]
+	shl rbx, 4
+	test rbx, rbx
+	jz .skip_ebda
+	mov rdx, 0x000A0000
+	call scan_system_table_region
+.skip_ebda:
 	mov rbx, 0x000E0000
-.scan_loop:
-	cmp rbx, 0x000FFFFF
+	mov rdx, 0x00100000
+	call scan_system_table_region
+
+	pop rax
+	pop rdx
+	pop rcx
+	pop rbx
+	pop rbp
+	ret
+
+scan_system_table_region:
+	cmp rbx, rdx
 	jae .done
 
 	mov rax, [rbx]
-	mov rcx, 0x2052545020445352
+	mov rcx, 0x2052545020445352	; "RSD PTR "
 	cmp rax, rcx
 	jne .check_smbios
 	mov [boot_info + BootInfo.acpi_rsdp_address], rbx
 .check_smbios:
 	mov eax, [rbx]
 	and eax, 0x00FFFFFF
-	cmp eax, 0x004D535F
+	cmp eax, 0x004D535F	; "_SM_"
 	jne .next
 	mov [boot_info + BootInfo.smbios_address], rbx
 .next:
 	add rbx, 16
-	jmp .scan_loop
+	jmp scan_system_table_region
 .done:
-	pop rax
-	pop rcx
-	pop rbx
-	pop rbp
 	ret
 
 fill_boot_info:

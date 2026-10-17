@@ -6,6 +6,8 @@ uint64_t physical_memory_manager_bitmap_size = 0;
 uint64_t total_pages = 0;
 uint64_t boot_alloc_current = 0;
 
+static uint64_t boot_alloc_access_offset = 0;
+
 __attribute__((aligned(4096))) pml4_table_t kernel_pml4 = {0};
 
 uint64_t physical_memory_manager_get_max_ram(const boot_info_t *info)
@@ -97,6 +99,37 @@ void physical_memory_manager_free_page(uint64_t physical_address)
 	if (page_index < total_pages)
 	{
 		physical_memory_manager_set_page_free(page_index);
+	}
+}
+
+void physical_memory_manager_free_region(uint64_t physical_address, uint64_t size)
+{
+	uint64_t start_page = physical_address / PAGE_SIZE;
+	uint64_t end_page = (physical_address + size + PAGE_SIZE - 1) / PAGE_SIZE;
+
+	for (uint64_t page = start_page; page < end_page && page < total_pages; page++)
+	{
+		physical_memory_manager_set_page_free(page);
+	}
+}
+
+void physical_memory_manager_free_acpi_reclaimable(const boot_info_t *info)
+{
+	if (info == NULL || info->memory_map_address == 0)
+	{
+		return;
+	}
+
+	memory_map_entry_t *memory_map = (memory_map_entry_t*)info->memory_map_address;
+
+	for (uint64_t i = 0; i < info->memory_map_entries; i++)
+	{
+		if (memory_map[i].type != MEMORY_TYPE_ACPI_RECLAIMABLE)
+		{
+			continue;
+		}
+
+		physical_memory_manager_free_region(memory_map[i].base_address, memory_map[i].length);
 	}
 }
 
@@ -201,21 +234,21 @@ void virtual_memory_manager_map_page(uint64_t virt, uint64_t physical, uint64_t 
 		uint64_t new_table = allocate_boot_page();
 		kernel_pml4[pml4_idx] = new_table | PAGE_PRESENT | PAGE_WRITABLE;
 	}
-	uint64_t* pdpt = (uint64_t*)(kernel_pml4[pml4_idx] & ~0xFFF);
+	uint64_t* pdpt = (uint64_t*)((kernel_pml4[pml4_idx] & ~0xFFF) + boot_alloc_access_offset);
 
 	if (!(pdpt[pdpt_idx] & PAGE_PRESENT))
 	{
 		uint64_t new_table = allocate_boot_page();
 		pdpt[pdpt_idx] = new_table | PAGE_PRESENT | PAGE_WRITABLE;
 	}
-	uint64_t* pd = (uint64_t*)(pdpt[pdpt_idx] & ~0xFFF);
+	uint64_t* pd = (uint64_t*)((pdpt[pdpt_idx] & ~0xFFF) + boot_alloc_access_offset);
 
 	if (!(pd[pd_idx] & PAGE_PRESENT))
 	{
 		uint64_t new_table = allocate_boot_page();
 		pd[pd_idx] = new_table | PAGE_PRESENT | PAGE_WRITABLE;
 	}
-	uint64_t* pt = (uint64_t*)(pd[pd_idx] & ~0xFFF);
+	uint64_t* pt = (uint64_t*)((pd[pd_idx] & ~0xFFF) + boot_alloc_access_offset);
 
 	pt[pt_idx] = (physical & ~0xFFF) | flags | PAGE_PRESENT;
 }
@@ -250,6 +283,8 @@ void virtual_memory_manager_init(const boot_info_t *info, uint64_t max_ram, uint
 	uint64_t pml4_phys = (uint64_t)&kernel_pml4;
 	__asm__ volatile("mov %0, %%cr3" :: "r"(pml4_phys) : "memory");
 
+	boot_alloc_access_offset = KERNEL_PHYSICAL_MAP_BASE;
+
 	serial_write("CR3 updated, VMM inited!\r\n");
 }
 
@@ -264,7 +299,7 @@ uint64_t allocate_boot_page(void)
 	uint64_t allocated_page = boot_alloc_current;
 	boot_alloc_current += 4096;
 
-	uint64_t* ptr = (uint64_t*)allocated_page;
+	uint64_t* ptr = (uint64_t*)(allocated_page + boot_alloc_access_offset);
 	for (int i = 0; i < 512; i++)
 	{
 		ptr[i] = 0;
