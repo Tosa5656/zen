@@ -32,7 +32,7 @@ jobs:
         run: make image
 
       - name: Upload Build Artifacts
-        uses: actions/artifacts/upload-artifact@v4
+        uses: actions/upload-artifact@v4
         with:
           name: release-files
           path: |
