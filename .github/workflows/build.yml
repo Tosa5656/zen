@@ -5,6 +5,7 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+  workflow_call:
 
 jobs:
   build:
@@ -29,3 +30,12 @@ jobs:
 
       - name: Build disk image
         run: make image
+
+      - name: Upload Build Artifacts
+        uses: actions/artifacts/upload-artifact@v4
+        with:
+          name: release-files
+          path: |
+            zen.iso
+            release-version
+            release-notes

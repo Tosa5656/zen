@@ -1,0 +1,1 @@
+First release of ZenOS. Currently includes a bootloader, kernel loader, PMM, VMM, PIC, APIC, ACPI, base GDT, IDT, and IRQ.

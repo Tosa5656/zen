@@ -1,0 +1,41 @@
+name: Create Release
+
+on:
+  push:
+    branches: [ "release" ]
+
+jobs:
+  trigger-build:
+    uses: ./.github/workflows/build.yml
+
+  create-release:
+    needs: trigger-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Build Artifacts
+        uses: actions/artifacts/download-artifact@v4
+        with:
+          name: release-files
+
+      - name: Read Release Info
+        id: release_info
+        run: |
+          VERSION=$(cat release-version | xargs)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+          cat release-notes >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: Release ${{ env.VERSION }}
+          body: ${{ env.RELEASE_BODY }}
+          files: zen.iso
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
