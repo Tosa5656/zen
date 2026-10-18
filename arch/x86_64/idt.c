@@ -5,6 +5,7 @@
 #include "timer.h"
 #include "io.h"
 #include "gdt.h"
+#include "keyboard.h"
 
 __attribute__((aligned(4096))) idt_entry_t idt_table[256] = {0};
 idt_ptr_t idt_pointer;
@@ -170,10 +171,7 @@ void irq_handler(cpu_registers_t* registers)
 	}
 	else if (irq_number == 1)
 	{
-		uint8_t scancode = inb(0x60);
-		serial_write("Key pressed! Scancode: ");
-		serial_dec(scancode);
-		serial_write("\r\n");
+		keyboard_push(inb(0x60));
 	}
 	else
 	{

@@ -62,11 +62,19 @@ void physical_memory_manager_set_page_free(uint64_t page_index);
 void physical_memory_manager_lock_region(uint64_t physical_address, uint64_t size);
 void physical_memory_manager_free_region(uint64_t physical_address, uint64_t size);
 void physical_memory_manager_free_acpi_reclaimable(const boot_info_t *info);
+void physical_memory_manager_lock_protected_regions(const boot_info_t *info);
 uint64_t physical_memory_manager_alloc_page(void);
+uint64_t physical_memory_manager_alloc_pages(uint64_t count);
 void physical_memory_manager_free_page(uint64_t physical_address);
+void physical_memory_manager_free_pages(uint64_t physical_address, uint64_t count);
+uint64_t physical_memory_manager_get_free_pages(void);
 void physical_memory_manager_init(const boot_info_t *info);
 
 void virtual_memory_manager_map_page(uint64_t virt, uint64_t physical, uint64_t flags);
+void virtual_memory_manager_map_range(uint64_t virt, uint64_t physical, uint64_t size, uint64_t flags);
+uint64_t virtual_memory_manager_map_anonymous(uint64_t virt, uint64_t size, uint64_t flags);
+void virtual_memory_manager_unmap_range(uint64_t virt, uint64_t size);
+uint64_t virtual_memory_manager_get_physical(uint64_t virt);
 void virtual_memory_manager_init(const boot_info_t *info, uint64_t max_ram, uint64_t kernel_size);
 
 #endif

@@ -133,6 +133,7 @@ typedef struct
 
 bool acpi_validate_header(acpi_header_t* header);
 void acpi_init(const boot_info_t *info);
+void acpi_relocate_tables(void);
 
 acpi_header_t *acpi_find_table(const char *signature);
 acpi_madt_t *acpi_get_madt(void);

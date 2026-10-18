@@ -1,10 +1,37 @@
 #include "acpi.h"
 #include "memory.h"
 #include "serial.h"
+#include "heap.h"
 
 static acpi_header_t *acpi_root_table = NULL;
 static uint32_t acpi_entry_count = 0;
 static uint8_t acpi_entry_size = 0;
+static uint64_t acpi_root_physical = 0;
+
+typedef struct
+{
+	uint64_t physical;
+	acpi_header_t *copy;
+} acpi_relocated_table_t;
+
+static acpi_relocated_table_t *acpi_relocated = NULL;
+static uint32_t acpi_relocated_count = 0;
+
+static acpi_header_t *acpi_lookup(uint64_t physical)
+{
+	if (acpi_relocated != NULL)
+	{
+		for (uint32_t i = 0; i < acpi_relocated_count; i++)
+		{
+			if (acpi_relocated[i].physical == physical)
+			{
+				return acpi_relocated[i].copy;
+			}
+		}
+	}
+
+	return (acpi_header_t *)physical_to_virtual(physical);
+}
 
 static bool acpi_checksum_ok(const uint8_t *data, uint32_t length)
 {
@@ -76,7 +103,7 @@ acpi_header_t *acpi_find_table(const char *signature)
 			continue;
 		}
 
-		acpi_header_t *table = (acpi_header_t *)physical_to_virtual(table_physical);
+		acpi_header_t *table = acpi_lookup(table_physical);
 
 		if (acpi_signature_equals(table->signature, signature, 4) && acpi_validate_header(table))
 		{
@@ -248,12 +275,14 @@ void acpi_init(const boot_info_t *info)
 		}
 
 		root = (acpi_header_t *)physical_to_virtual(rsdp->xsdt_address);
+		acpi_root_physical = rsdp->xsdt_address;
 		root_name = "XSDT";
 		entry_size = sizeof(uint64_t);
 	}
 	else
 	{
 		root = (acpi_header_t *)physical_to_virtual(rsdp->rsdt_address);
+		acpi_root_physical = rsdp->rsdt_address;
 		root_name = "RSDT";
 		entry_size = sizeof(uint32_t);
 	}
@@ -312,4 +341,83 @@ void acpi_init(const boot_info_t *info)
 	acpi_parse_madt();
 
 	serial_write("ACPI: init done\r\n");
+}
+
+void acpi_relocate_tables(void)
+{
+	if (acpi_root_table == NULL || acpi_entry_count == 0)
+	{
+		return;
+	}
+
+	uint32_t total = acpi_entry_count + 1;
+
+	acpi_relocated = (acpi_relocated_table_t *)kcalloc(total, sizeof(acpi_relocated_table_t));
+	if (acpi_relocated == NULL)
+	{
+		serial_write("ACPI: no heap for copies, tables stay in place\r\n");
+		return;
+	}
+
+	const uint8_t *table_pointers = (const uint8_t *)acpi_root_table + sizeof(acpi_header_t);
+
+	for (uint32_t i = 0; i < total; i++)
+	{
+		acpi_header_t *source;
+		uint64_t physical;
+
+		if (i == 0)
+		{
+			source = acpi_root_table;
+			physical = acpi_root_physical;
+		}
+		else
+		{
+			if (acpi_entry_size == sizeof(uint64_t))
+			{
+				physical = ((const uint64_t *)table_pointers)[i - 1];
+			}
+			else
+			{
+				physical = ((const uint32_t *)table_pointers)[i - 1];
+			}
+
+			if (physical == 0)
+			{
+				continue;
+			}
+
+			source = (acpi_header_t *)physical_to_virtual(physical);
+			if (!acpi_validate_header(source))
+			{
+				serial_write("ACPI: skipping table with bad checksum\r\n");
+				continue;
+			}
+		}
+
+		acpi_header_t *copy = (acpi_header_t *)kmalloc(source->length);
+		if (copy == NULL)
+		{
+			serial_write("ACPI: out of memory while copying tables\r\n");
+			break;
+		}
+
+		const uint8_t *from = (const uint8_t *)source;
+		uint8_t *to = (uint8_t *)copy;
+		for (uint32_t byte = 0; byte < source->length; byte++)
+		{
+			to[byte] = from[byte];
+		}
+
+		acpi_relocated[acpi_relocated_count].physical = physical;
+		acpi_relocated[acpi_relocated_count].copy = copy;
+		acpi_relocated_count++;
+
+		if (i == 0)
+		{
+			acpi_root_table = copy;
+		}
+	}
+
+	serial_field("ACPI: tables copied to the heap: ", acpi_relocated_count);
 }

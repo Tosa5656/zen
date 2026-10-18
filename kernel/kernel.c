@@ -5,6 +5,8 @@
 #include "acpi.h"
 #include "apic.h"
 #include "gdt.h"
+#include "heap.h"
+#include "keyboard.h"
 #include <idt.h>
 
 extern uint8_t _kernel_start[];
@@ -49,19 +51,33 @@ void kmain(boot_info_t *boot_info)
 
 	physical_memory_manager_init(boot_info);
 
+	heap_init(boot_info);
+
 	acpi_init(boot_info);
 
-	uint64_t test_alloc1 = physical_memory_manager_alloc_page();
-	uint64_t test_alloc2 = physical_memory_manager_alloc_page();
-	uint64_t test_alloc3 = physical_memory_manager_alloc_page();
+	acpi_relocate_tables();
+	physical_memory_manager_free_acpi_reclaimable(boot_info);
+	physical_memory_manager_lock_protected_regions(boot_info);
 
-	serial_field("Test alloc #1 address ", test_alloc1);
-	serial_field("Test alloc #2 address ", test_alloc2);
-	serial_field("Test alloc #3 address ", test_alloc3);
+	heap_print_stats();
 
-	physical_memory_manager_free_page(test_alloc1);
-	physical_memory_manager_free_page(test_alloc2);
-	physical_memory_manager_free_page(test_alloc3);
+	keyboard_init();
+
+	void* test_alloc1 = kmalloc(10);
+	void* test_alloc2 = kmalloc(20);
+	void* test_alloc3 = kmalloc(30);
+
+	serial_write("Test allocations successfully completed!\r\n");
+
+	heap_print_stats();
+
+	kfree(test_alloc1);
+	kfree(test_alloc2);
+	kfree(test_alloc3);
+
+	serial_write("Test free for allocations successfully completed!\r\n");
+
+	heap_print_stats();
 
 	gdt_init();
 
@@ -71,6 +87,14 @@ void kmain(boot_info_t *boot_info)
 
 	while(1)
 	{
+		uint8_t scancode;
+		while (keyboard_pop(&scancode))
+		{
+			serial_write("Key pressed! Scancode: ");
+			serial_dec(scancode);
+			serial_write("\r\n");
+		}
+
 		serial_write("1 one second.\r\n");
 		sleep(1000);
 	}
