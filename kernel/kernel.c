@@ -43,8 +43,8 @@ void kmain(boot_info_t *boot_info)
 	serial_init();
 	dump_boot_info(boot_info);
 
-	uint64_t kernel_start_physical = (uint64_t)_kernel_start;
-	uint64_t kernel_end_physical = (uint64_t)_kernel_end;
+	uint64_t kernel_start_physical = VIRTUAL_TO_PHYSICAL(_kernel_start);
+	uint64_t kernel_end_physical = VIRTUAL_TO_PHYSICAL(_kernel_end);
 	uint64_t kernel_size = kernel_end_physical - kernel_start_physical;
 
 	serial_field("kernel start physical", kernel_start_physical);
@@ -65,27 +65,7 @@ void kmain(boot_info_t *boot_info)
 
 	heap_print_stats();
 
-	allocator_self_test();
-
-	heap_print_stats();
-
 	keyboard_init();
-
-	void* test_alloc1 = kmalloc(10);
-	void* test_alloc2 = kmalloc(20);
-	void* test_alloc3 = kmalloc(30);
-
-	serial_write("Test allocations successfully completed!\r\n");
-
-	heap_print_stats();
-
-	kfree(test_alloc1);
-	kfree(test_alloc2);
-	kfree(test_alloc3);
-
-	serial_write("Test free for allocations successfully completed!\r\n");
-
-	heap_print_stats();
 
 	slab_print_details();
 	buddy_print_stats();

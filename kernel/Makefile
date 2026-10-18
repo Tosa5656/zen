@@ -3,7 +3,7 @@ LD=x86_64-elf-ld
 AS=nasm
 ARCH=x86_64
 
-CFLAGS=-ffreestanding -O2 -Wall -Wextra -mno-red-zone -m64 -fno-pie -fno-pic -I../arch/$(ARCH)/ -I. -Iallocators
+CFLAGS=-ffreestanding -O2 -Wall -Wextra -mno-red-zone -m64 -fno-pie -fno-pic -mcmodel=kernel -I../arch/$(ARCH)/ -I. -Iallocators
 
 ARCH_CODE=../arch/$(ARCH)/
 

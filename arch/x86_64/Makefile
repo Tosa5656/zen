@@ -1,6 +1,6 @@
 AS=nasm
 CC=x86_64-elf-gcc
-CFLAGS=-ffreestanding -O2 -Wall -Wextra -mno-red-zone -m64 -fno-pie -fno-pic -I../../kernel
+CFLAGS=-ffreestanding -O2 -Wall -Wextra -mno-red-zone -m64 -fno-pie -fno-pic -mcmodel=kernel -I../../kernel
 
 all: bootloader
 

@@ -8,6 +8,7 @@ uint64_t boot_alloc_current = 0;
 static uint64_t boot_alloc_access_offset = 0;
 static int page_table_allocator_is_pmm = 0;
 static uint64_t boot_alloc_end = 0;
+static uint64_t current_pml4 = 0;
 
 __attribute__((aligned(4096))) pml4_table_t kernel_pml4 = {0};
 
@@ -138,7 +139,7 @@ void physical_memory_manager_lock_protected_regions(const boot_info_t *info)
 {
 	physical_memory_manager_lock_region(0x0, 0x100000);
 
-	uint64_t kernel_physical_start = (uint64_t)_kernel_start;
+	uint64_t kernel_physical_start = VIRTUAL_TO_PHYSICAL(_kernel_start);
 	physical_memory_manager_lock_region(kernel_physical_start, boot_alloc_current - kernel_physical_start);
 
 	physical_memory_manager_lock_region((uint64_t)info, info->size);
@@ -179,35 +180,63 @@ static void free_page_table_page(uint64_t physical)
 	physical_memory_manager_free_page(physical);
 }
 
-void virtual_memory_manager_map_page(uint64_t virt, uint64_t physical, uint64_t flags)
+static uint64_t *table_pointer(uint64_t table_physical)
+{
+	return (uint64_t *)(table_physical + boot_alloc_access_offset);
+}
+
+static uint64_t kernel_pml4_physical(void)
+{
+	return VIRTUAL_TO_PHYSICAL(&kernel_pml4);
+}
+
+static void map_page_in(uint64_t pml4_physical, uint64_t virt, uint64_t physical, uint64_t flags)
 {
 	size_t pml4_idx = (virt >> 39) & 0x1FF;
 	size_t pdpt_idx = (virt >> 30) & 0x1FF;
 	size_t pd_idx = (virt >> 21) & 0x1FF;
 	size_t pt_idx = (virt >> 12) & 0x1FF;
 
-	if (!(kernel_pml4[pml4_idx] & PAGE_PRESENT))
+	uint64_t user = flags & PAGE_USER;
+
+	uint64_t *pml4 = table_pointer(pml4_physical);
+
+	if (!(pml4[pml4_idx] & PAGE_PRESENT))
 	{
-		uint64_t new_table = allocate_page_table();
-		kernel_pml4[pml4_idx] = new_table | PAGE_PRESENT | PAGE_WRITABLE;
+		pml4[pml4_idx] = allocate_page_table() | PAGE_PRESENT | PAGE_WRITABLE | user;
 	}
-	uint64_t* pdpt = (uint64_t*)((kernel_pml4[pml4_idx] & ~0xFFF) + boot_alloc_access_offset);
+	else if (user)
+	{
+		pml4[pml4_idx] |= PAGE_USER;
+	}
+	uint64_t *pdpt = table_pointer(pml4[pml4_idx] & ~0xFFFULL);
 
 	if (!(pdpt[pdpt_idx] & PAGE_PRESENT))
 	{
-		uint64_t new_table = allocate_page_table();
-		pdpt[pdpt_idx] = new_table | PAGE_PRESENT | PAGE_WRITABLE;
+		pdpt[pdpt_idx] = allocate_page_table() | PAGE_PRESENT | PAGE_WRITABLE | user;
 	}
-	uint64_t* pd = (uint64_t*)((pdpt[pdpt_idx] & ~0xFFF) + boot_alloc_access_offset);
+	else if (user)
+	{
+		pdpt[pdpt_idx] |= PAGE_USER;
+	}
+	uint64_t *pd = table_pointer(pdpt[pdpt_idx] & ~0xFFFULL);
 
 	if (!(pd[pd_idx] & PAGE_PRESENT))
 	{
-		uint64_t new_table = allocate_page_table();
-		pd[pd_idx] = new_table | PAGE_PRESENT | PAGE_WRITABLE;
+		pd[pd_idx] = allocate_page_table() | PAGE_PRESENT | PAGE_WRITABLE | user;
 	}
-	uint64_t* pt = (uint64_t*)((pd[pd_idx] & ~0xFFF) + boot_alloc_access_offset);
+	else if (user)
+	{
+		pd[pd_idx] |= PAGE_USER;
+	}
+	uint64_t *pt = table_pointer(pd[pd_idx] & ~0xFFFULL);
 
-	pt[pt_idx] = (physical & ~0xFFF) | flags | PAGE_PRESENT;
+	pt[pt_idx] = (physical & ~0xFFFULL) | flags | PAGE_PRESENT;
+}
+
+void virtual_memory_manager_map_page(uint64_t virt, uint64_t physical, uint64_t flags)
+{
+	map_page_in(kernel_pml4_physical(), virt, physical, flags);
 }
 
 void virtual_memory_manager_map_range(uint64_t virt, uint64_t physical, uint64_t size, uint64_t flags)
@@ -218,63 +247,77 @@ void virtual_memory_manager_map_range(uint64_t virt, uint64_t physical, uint64_t
 	}
 }
 
-uint64_t virtual_memory_manager_get_physical(uint64_t virt)
+static uint64_t get_physical_in(uint64_t pml4_physical, uint64_t virt)
 {
 	size_t pml4_idx = (virt >> 39) & 0x1FF;
 	size_t pdpt_idx = (virt >> 30) & 0x1FF;
 	size_t pd_idx = (virt >> 21) & 0x1FF;
 	size_t pt_idx = (virt >> 12) & 0x1FF;
 
-	if (!(kernel_pml4[pml4_idx] & PAGE_PRESENT))
+	uint64_t *pml4 = table_pointer(pml4_physical);
+
+	if (!(pml4[pml4_idx] & PAGE_PRESENT))
 	{
 		return 0;
 	}
-	uint64_t* pdpt = (uint64_t*)((kernel_pml4[pml4_idx] & ~0xFFF) + boot_alloc_access_offset);
+	uint64_t *pdpt = table_pointer(pml4[pml4_idx] & ~0xFFFULL);
 
 	if (!(pdpt[pdpt_idx] & PAGE_PRESENT))
 	{
 		return 0;
 	}
-	uint64_t* pd = (uint64_t*)((pdpt[pdpt_idx] & ~0xFFF) + boot_alloc_access_offset);
+	uint64_t *pd = table_pointer(pdpt[pdpt_idx] & ~0xFFFULL);
 
 	if (!(pd[pd_idx] & PAGE_PRESENT))
 	{
 		return 0;
 	}
-	uint64_t* pt = (uint64_t*)((pd[pd_idx] & ~0xFFF) + boot_alloc_access_offset);
+	uint64_t *pt = table_pointer(pd[pd_idx] & ~0xFFFULL);
 
 	if (!(pt[pt_idx] & PAGE_PRESENT))
 	{
 		return 0;
 	}
 
-	return (pt[pt_idx] & ~0xFFF) + (virt & 0xFFF);
+	return (pt[pt_idx] & ~0xFFFULL) + (virt & 0xFFF);
 }
 
-static void virtual_memory_manager_unmap_page(uint64_t virt)
+uint64_t virtual_memory_manager_get_physical(uint64_t virt)
+{
+	return get_physical_in(kernel_pml4_physical(), virt);
+}
+
+uint64_t virtual_memory_manager_translate(uint64_t pml4_physical, uint64_t virt)
+{
+	return get_physical_in(pml4_physical, virt);
+}
+
+static void unmap_page_in(uint64_t pml4_physical, uint64_t virt)
 {
 	size_t pml4_idx = (virt >> 39) & 0x1FF;
 	size_t pdpt_idx = (virt >> 30) & 0x1FF;
 	size_t pd_idx = (virt >> 21) & 0x1FF;
 	size_t pt_idx = (virt >> 12) & 0x1FF;
 
-	if (!(kernel_pml4[pml4_idx] & PAGE_PRESENT))
+	uint64_t *pml4 = table_pointer(pml4_physical);
+
+	if (!(pml4[pml4_idx] & PAGE_PRESENT))
 	{
 		return;
 	}
-	uint64_t* pdpt = (uint64_t*)((kernel_pml4[pml4_idx] & ~0xFFF) + boot_alloc_access_offset);
+	uint64_t *pdpt = table_pointer(pml4[pml4_idx] & ~0xFFFULL);
 
 	if (!(pdpt[pdpt_idx] & PAGE_PRESENT))
 	{
 		return;
 	}
-	uint64_t* pd = (uint64_t*)((pdpt[pdpt_idx] & ~0xFFF) + boot_alloc_access_offset);
+	uint64_t *pd = table_pointer(pdpt[pdpt_idx] & ~0xFFFULL);
 
 	if (!(pd[pd_idx] & PAGE_PRESENT))
 	{
 		return;
 	}
-	uint64_t* pt = (uint64_t*)((pd[pd_idx] & ~0xFFF) + boot_alloc_access_offset);
+	uint64_t *pt = table_pointer(pd[pd_idx] & ~0xFFFULL);
 
 	if (!(pt[pt_idx] & PAGE_PRESENT))
 	{
@@ -291,7 +334,7 @@ static void virtual_memory_manager_unmap_page(uint64_t virt)
 	}
 	if (empty)
 	{
-		uint64_t pt_physical = pd[pd_idx] & ~0xFFF;
+		uint64_t pt_physical = pd[pd_idx] & ~0xFFFULL;
 		pd[pd_idx] = 0;
 		free_page_table_page(pt_physical);
 
@@ -302,7 +345,7 @@ static void virtual_memory_manager_unmap_page(uint64_t virt)
 		}
 		if (empty)
 		{
-			uint64_t pd_physical = pdpt[pdpt_idx] & ~0xFFF;
+			uint64_t pd_physical = pdpt[pdpt_idx] & ~0xFFFULL;
 			pdpt[pdpt_idx] = 0;
 			free_page_table_page(pd_physical);
 
@@ -313,8 +356,8 @@ static void virtual_memory_manager_unmap_page(uint64_t virt)
 			}
 			if (empty)
 			{
-				uint64_t pdpt_physical = kernel_pml4[pml4_idx] & ~0xFFF;
-				kernel_pml4[pml4_idx] = 0;
+				uint64_t pdpt_physical = pml4[pml4_idx] & ~0xFFFULL;
+				pml4[pml4_idx] = 0;
 				free_page_table_page(pdpt_physical);
 			}
 		}
@@ -325,8 +368,137 @@ void virtual_memory_manager_unmap_range(uint64_t virt, uint64_t size)
 {
 	for (uint64_t offset = 0; offset < size; offset += PAGE_SIZE)
 	{
-		virtual_memory_manager_unmap_page(virt + offset);
+		unmap_page_in(kernel_pml4_physical(), virt + offset);
 	}
+}
+
+void virtual_memory_manager_unmap_user_page(uint64_t pml4_physical, uint64_t virt)
+{
+	unmap_page_in(pml4_physical, virt);
+}
+
+uint64_t virtual_memory_manager_get_kernel_pml4(void)
+{
+	return kernel_pml4_physical();
+}
+
+uint64_t virtual_memory_manager_get_current_pml4(void)
+{
+	if (current_pml4 == 0)
+	{
+		return kernel_pml4_physical();
+	}
+
+	return current_pml4;
+}
+
+uint64_t virtual_memory_manager_create_address_space(void)
+{
+	uint64_t pml4_physical = physical_memory_manager_alloc_page();
+	if (pml4_physical == 0)
+	{
+		return 0;
+	}
+
+	uint64_t *new_pml4 = table_pointer(pml4_physical);
+	for (int i = 0; i < 512; i++)
+	{
+		new_pml4[i] = 0;
+	}
+
+	uint64_t *kernel_table = table_pointer(kernel_pml4_physical());
+	for (int i = 256; i < 512; i++)
+	{
+		new_pml4[i] = kernel_table[i];
+	}
+
+	return pml4_physical;
+}
+
+void virtual_memory_manager_destroy_address_space(uint64_t pml4_physical)
+{
+	if (pml4_physical == 0 || pml4_physical == kernel_pml4_physical())
+	{
+		return;
+	}
+
+	uint64_t *pml4 = table_pointer(pml4_physical);
+
+	for (int pml4_idx = 0; pml4_idx < 256; pml4_idx++)
+	{
+		if (!(pml4[pml4_idx] & PAGE_PRESENT))
+		{
+			continue;
+		}
+		uint64_t *pdpt = table_pointer(pml4[pml4_idx] & ~0xFFFULL);
+
+		for (int pdpt_idx = 0; pdpt_idx < 512; pdpt_idx++)
+		{
+			if (!(pdpt[pdpt_idx] & PAGE_PRESENT))
+			{
+				continue;
+			}
+			uint64_t *pd = table_pointer(pdpt[pdpt_idx] & ~0xFFFULL);
+
+			for (int pd_idx = 0; pd_idx < 512; pd_idx++)
+			{
+				if (!(pd[pd_idx] & PAGE_PRESENT))
+				{
+					continue;
+				}
+				if (pd[pd_idx] & PAGE_HUGE)
+				{
+					pd[pd_idx] = 0;
+					continue;
+				}
+				uint64_t *pt = table_pointer(pd[pd_idx] & ~0xFFFULL);
+
+				for (int pt_idx = 0; pt_idx < 512; pt_idx++)
+				{
+					if (!(pt[pt_idx] & PAGE_PRESENT))
+					{
+						continue;
+					}
+
+					physical_memory_manager_free_page(pt[pt_idx] & ~0xFFFULL);
+					pt[pt_idx] = 0;
+				}
+
+				free_page_table_page(pd[pd_idx] & ~0xFFFULL);
+				pd[pd_idx] = 0;
+			}
+
+			free_page_table_page(pdpt[pdpt_idx] & ~0xFFFULL);
+			pdpt[pdpt_idx] = 0;
+		}
+
+		free_page_table_page(pml4[pml4_idx] & ~0xFFFULL);
+		pml4[pml4_idx] = 0;
+	}
+
+	physical_memory_manager_free_page(pml4_physical);
+}
+
+void virtual_memory_manager_switch_address_space(uint64_t pml4_physical)
+{
+	if (pml4_physical == 0)
+	{
+		return;
+	}
+
+	current_pml4 = pml4_physical;
+	__asm__ volatile("mov %0, %%cr3" :: "r"(pml4_physical) : "memory");
+}
+
+int virtual_memory_manager_map_user_page(uint64_t pml4_physical, uint64_t virt, uint64_t physical, uint64_t flags)
+{
+	if (pml4_physical == 0 || virt >= USER_SPACE_END)
+	{
+		return 0;
+	}
+
+	map_page_in(pml4_physical, virt, physical, (flags & ~PAGE_HUGE) | PAGE_USER);
+	return 1;
 }
 
 uint64_t virtual_memory_manager_map_anonymous(uint64_t virt, uint64_t size, uint64_t flags)
@@ -380,7 +552,7 @@ void virtual_memory_manager_init(const boot_info_t *info, uint64_t max_ram, uint
 
 	for (uint64_t offset = 0; offset < kernel_size; offset += PAGE_SIZE)
 	{
-		virtual_memory_manager_map_page(0xFFFFFFFF80000000ULL + offset, 0x100000 + offset, PAGE_WRITABLE);
+		virtual_memory_manager_map_page(KERNEL_IMAGE_VIRTUAL + offset, 0x100000 + offset, PAGE_WRITABLE);
 	}
 
 	uint64_t framebuffer_physical = info->framebuffer_address;
@@ -388,10 +560,11 @@ void virtual_memory_manager_init(const boot_info_t *info, uint64_t max_ram, uint
 
 	for (uint64_t offset = 0; offset < framebuffer_size; offset += PAGE_SIZE)
 	{
-		virtual_memory_manager_map_page(framebuffer_physical + offset, framebuffer_physical + offset, PAGE_WRITABLE);
+		virtual_memory_manager_map_page(KERNEL_MMIO_BASE + framebuffer_physical + offset,
+			framebuffer_physical + offset, PAGE_WRITABLE | PAGE_CACHE_DISABLE);
 	}
 
-	uint64_t pml4_phys = (uint64_t)&kernel_pml4;
+	uint64_t pml4_phys = VIRTUAL_TO_PHYSICAL(&kernel_pml4);
 	__asm__ volatile("mov %0, %%cr3" :: "r"(pml4_phys) : "memory");
 
 	boot_alloc_access_offset = KERNEL_PHYSICAL_MAP_BASE;
@@ -406,7 +579,7 @@ void boot_alloc_init(void)
 		return;
 	}
 
-	uint64_t raw_end = (uint64_t)&_kernel_end;
+	uint64_t raw_end = VIRTUAL_TO_PHYSICAL(_kernel_end);
 	boot_alloc_current = (raw_end + 4095) & ~4095;
 }
 

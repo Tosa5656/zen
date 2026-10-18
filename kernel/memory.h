@@ -24,6 +24,12 @@
 #define MEMORY_TYPE_PERSISTENT 6
 
 #define KERNEL_PHYSICAL_MAP_BASE 0xFFFF800000000000ULL
+#define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000ULL
+#define KERNEL_IMAGE_VIRTUAL (KERNEL_VIRTUAL_BASE + 0x100000ULL)
+#define VIRTUAL_TO_PHYSICAL(address) ((uint64_t)(address) - KERNEL_VIRTUAL_BASE)
+#define KERNEL_MMIO_BASE 0xFFFFFE0000000000ULL
+
+#define USER_SPACE_END 0x0000800000000000ULL
 
 extern uint8_t _kernel_start[];
 extern uint8_t _kernel_end[];
@@ -70,5 +76,13 @@ uint64_t virtual_memory_manager_map_anonymous(uint64_t virt, uint64_t size, uint
 void virtual_memory_manager_unmap_range(uint64_t virt, uint64_t size);
 uint64_t virtual_memory_manager_get_physical(uint64_t virt);
 void virtual_memory_manager_init(const boot_info_t *info, uint64_t max_ram, uint64_t kernel_size);
+uint64_t virtual_memory_manager_create_address_space(void);
+void virtual_memory_manager_destroy_address_space(uint64_t pml4_physical);
+void virtual_memory_manager_switch_address_space(uint64_t pml4_physical);
+uint64_t virtual_memory_manager_get_current_pml4(void);
+uint64_t virtual_memory_manager_get_kernel_pml4(void);
+int virtual_memory_manager_map_user_page(uint64_t pml4_physical, uint64_t virt, uint64_t physical, uint64_t flags);
+void virtual_memory_manager_unmap_user_page(uint64_t pml4_physical, uint64_t virt);
+uint64_t virtual_memory_manager_translate(uint64_t pml4_physical, uint64_t virt);
 
 #endif
