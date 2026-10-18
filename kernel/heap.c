@@ -1,5 +1,7 @@
 #include "heap.h"
 #include "memory.h"
+#include "buddy.h"
+#include "slab.h"
 #include "panic.h"
 #include "serial.h"
 
@@ -249,8 +251,8 @@ void heap_init(const boot_info_t *info)
 
 	free_list_head = first;
 
-	serial_field("Heap base             ", heap_base);
-	serial_field("Heap initial size     ", heap_total);
+	serial_field("heap base", heap_base);
+	serial_field("heap initial size", heap_total);
 }
 
 static void *kmalloc_pages(uint64_t need)
@@ -277,6 +279,16 @@ void *kmalloc(uint64_t size)
 	if (size == 0)
 	{
 		return 0;
+	}
+
+	if (size <= SLAB_MAX_OBJECT)
+	{
+		void *object = slab_alloc(size);
+
+		if (object != 0)
+		{
+			return object;
+		}
 	}
 
 	uint64_t need = ALIGN_UP(size, HEAP_ALIGNMENT) + HEAP_HEADER_SIZE;
@@ -335,6 +347,49 @@ void *kcalloc(uint64_t count, uint64_t size)
 	return pointer;
 }
 
+static uint64_t allocator_usable_size(void *pointer)
+{
+	uint64_t address = (uint64_t)pointer;
+
+	if (address >= heap_base && address < heap_end)
+	{
+		block_header_t *header = (block_header_t *)((uint8_t *)pointer - HEAP_HEADER_SIZE);
+
+		if (header->magic != HEAP_MAGIC_INUSE)
+		{
+			kernel_panic_value("allocator: bad heap pointer", address);
+		}
+
+		return header->size - HEAP_HEADER_SIZE;
+	}
+
+	if (address < KERNEL_PHYSICAL_MAP_BASE)
+	{
+		kernel_panic_value("allocator: bad pointer", address);
+	}
+
+	if (buddy_page_is_slab(address - KERNEL_PHYSICAL_MAP_BASE))
+	{
+		uint64_t usable = slab_usable_size(pointer);
+
+		if (usable == 0)
+		{
+			kernel_panic_value("allocator: bad slab pointer", address);
+		}
+
+		return usable;
+	}
+
+	block_header_t *header = (block_header_t *)((uint8_t *)pointer - HEAP_HEADER_SIZE);
+
+	if (header->magic != HEAP_MAGIC_INUSE)
+	{
+		kernel_panic_value("allocator: bad pointer", address);
+	}
+
+	return header->size - HEAP_HEADER_SIZE;
+}
+
 void *krealloc(void *pointer, uint64_t size)
 {
 	if (pointer == 0)
@@ -348,13 +403,7 @@ void *krealloc(void *pointer, uint64_t size)
 		return 0;
 	}
 
-	block_header_t *header = (block_header_t *)((uint8_t *)pointer - HEAP_HEADER_SIZE);
-	if (header->magic != HEAP_MAGIC_INUSE)
-	{
-		kernel_panic_value("krealloc: bad pointer", (uint64_t)pointer);
-	}
-
-	uint64_t usable = header->size - HEAP_HEADER_SIZE;
+	uint64_t usable = allocator_usable_size(pointer);
 	if (size <= usable)
 	{
 		return pointer;
@@ -385,27 +434,52 @@ void kfree(void *pointer)
 		return;
 	}
 
-	block_header_t *header = (block_header_t *)((uint8_t *)pointer - HEAP_HEADER_SIZE);
+	uint64_t address = (uint64_t)pointer;
 
-	if (header->magic == HEAP_MAGIC_FREE)
+	if (address >= heap_base && address < heap_end)
 	{
-		kernel_panic_value("kfree: double free", (uint64_t)pointer);
-	}
+		block_header_t *header = (block_header_t *)((uint8_t *)pointer - HEAP_HEADER_SIZE);
 
-	if (header->magic != HEAP_MAGIC_INUSE)
-	{
-		kernel_panic_value("kfree: bad pointer", (uint64_t)pointer);
-	}
+		if (header->magic == HEAP_MAGIC_FREE)
+		{
+			kernel_panic_value("kfree: double free", address);
+		}
 
-	heap_used -= header->size;
+		if (header->magic != HEAP_MAGIC_INUSE)
+		{
+			kernel_panic_value("kfree: bad pointer", address);
+		}
 
-	if ((uint64_t)pointer >= heap_base && (uint64_t)pointer < heap_end)
-	{
+		heap_used -= header->size;
 		heap_release((free_block_t *)header);
 		return;
 	}
 
-	// page backed allocation, outside of the heap region
+	if (address < KERNEL_PHYSICAL_MAP_BASE)
+	{
+		kernel_panic_value("kfree: bad pointer", address);
+	}
+
+	if (buddy_page_is_slab(address - KERNEL_PHYSICAL_MAP_BASE))
+	{
+		slab_free(pointer);
+		return;
+	}
+
+	block_header_t *header = (block_header_t *)((uint8_t *)pointer - HEAP_HEADER_SIZE);
+
+	if (header->magic == HEAP_MAGIC_FREE)
+	{
+		kernel_panic_value("kfree: double free", address);
+	}
+
+	if (header->magic != HEAP_MAGIC_INUSE)
+	{
+		kernel_panic_value("kfree: bad pointer", address);
+	}
+
+	heap_used -= header->size;
+
 	uint64_t size = header->size;
 	uint64_t physical = (uint64_t)((uint8_t *)header - (uint8_t *)KERNEL_PHYSICAL_MAP_BASE);
 
@@ -425,9 +499,124 @@ void heap_print_stats(void)
 		}
 	}
 
-	serial_field("Heap reserved ", heap_total);
-	serial_field("Heap in use   ", heap_used);
-	serial_field("Heap free     ", heap_total - heap_used);
-	serial_field("Largest block ", largest);
-	serial_field("Free frames   ", physical_memory_manager_get_free_pages());
+	serial_field("heap reserved", heap_total);
+	serial_field("heap in use", heap_used);
+	serial_field("heap free", heap_total - heap_used);
+	serial_field("largest block", largest);
+	slab_print_stats();
+	serial_field("free frames", physical_memory_manager_get_free_pages());
+}
+
+static void allocator_test_expect(int condition, const char *message, uint64_t value)
+{
+	if (!condition)
+	{
+		kernel_panic_value(message, value);
+	}
+}
+
+void allocator_self_test(void)
+{
+	enum { TEST_OBJECTS = SLAB_CLASS_COUNT * 4 };
+
+	serial_write("Allocator self test...\r\n");
+
+	uint64_t baseline = physical_memory_manager_get_free_pages();
+
+	uint64_t pages[4];
+
+	for (int i = 0; i < 4; i++)
+	{
+		pages[i] = physical_memory_manager_alloc_page();
+		allocator_test_expect(pages[i] != 0, "self test: page alloc failed", i);
+		allocator_test_expect((pages[i] & (PAGE_SIZE - 1)) == 0,
+			"self test: unaligned page", pages[i]);
+	}
+
+	for (int i = 0; i < 4; i++)
+	{
+		physical_memory_manager_free_page(pages[i]);
+	}
+
+	allocator_test_expect(physical_memory_manager_get_free_pages() == baseline, "self test: pages did not coalesce", physical_memory_manager_get_free_pages());
+
+	uint64_t block = physical_memory_manager_alloc_pages(1024);
+	allocator_test_expect(block != 0, "self test: large block alloc failed", 0);
+	allocator_test_expect((block & ((1024ULL * PAGE_SIZE) - 1)) == 0, "self test: block not aligned", block);
+
+	physical_memory_manager_free_pages(block, 1024);
+	allocator_test_expect(physical_memory_manager_get_free_pages() == baseline, "self test: large block did not merge", physical_memory_manager_get_free_pages());
+
+	uint64_t victim = physical_memory_manager_alloc_pages(64);
+	allocator_test_expect(victim != 0, "self test: cut block alloc failed", 0);
+	physical_memory_manager_free_pages(victim, 64);
+
+	physical_memory_manager_lock_region(victim + 10 * PAGE_SIZE, 2 * PAGE_SIZE);
+	allocator_test_expect(physical_memory_manager_get_free_pages() == baseline - 2, "self test: lock did not cut the block", physical_memory_manager_get_free_pages());
+
+	physical_memory_manager_lock_region(victim + 10 * PAGE_SIZE, 2 * PAGE_SIZE);
+	allocator_test_expect(physical_memory_manager_get_free_pages() == baseline - 2, "self test: lock is not idempotent", physical_memory_manager_get_free_pages());
+
+	physical_memory_manager_free_region(victim + 10 * PAGE_SIZE, 2 * PAGE_SIZE);
+	allocator_test_expect(physical_memory_manager_get_free_pages() == baseline, "self test: unlock did not heal", physical_memory_manager_get_free_pages());
+
+	physical_memory_manager_free_region(victim, 64 * PAGE_SIZE);
+	allocator_test_expect(physical_memory_manager_get_free_pages() == baseline, "self test: free range is not idempotent", physical_memory_manager_get_free_pages());
+
+	uint64_t again = physical_memory_manager_alloc_pages(64);
+	allocator_test_expect(again != 0, "self test: merged block alloc failed", 0);
+	physical_memory_manager_free_pages(again, 64);
+	allocator_test_expect(physical_memory_manager_get_free_pages() == baseline, "self test: merged block did not come back", physical_memory_manager_get_free_pages());
+
+	void *objects[TEST_OBJECTS];
+
+	for (int i = 0; i < TEST_OBJECTS; i++)
+	{
+		uint64_t size = (uint64_t)16 << (i / 4);
+		objects[i] = kmalloc(size);
+		allocator_test_expect(objects[i] != 0, "self test: slab alloc failed", size);
+
+		uint8_t *bytes = (uint8_t *)objects[i];
+		for (uint64_t b = 0; b < size; b++)
+		{
+			bytes[b] = (uint8_t)(i + 1);
+		}
+	}
+
+	for (int i = 0; i < TEST_OBJECTS; i++)
+	{
+		uint64_t size = (uint64_t)16 << (i / 4);
+		uint8_t *bytes = (uint8_t *)objects[i];
+
+		for (uint64_t b = 0; b < size; b++)
+		{
+			allocator_test_expect(bytes[b] == (uint8_t)(i + 1),
+				"self test: slab object corrupted", i);
+		}
+	}
+
+	for (int i = 0; i < TEST_OBJECTS; i++)
+	{
+		kfree(objects[i]);
+	}
+
+	allocator_test_expect(physical_memory_manager_get_free_pages() == baseline, "self test: slabs were not returned", physical_memory_manager_get_free_pages());
+
+	void *middle = kmalloc(2000);
+	allocator_test_expect(middle != 0, "self test: heap alloc failed", 0);
+
+	void *spill = kmalloc(9000);
+	allocator_test_expect(spill != 0, "self test: page backed alloc failed", 0);
+
+	((uint8_t *)middle)[0] = 0x5A;
+	((uint8_t *)spill)[0] = 0xA5;
+	allocator_test_expect(((uint8_t *)middle)[0] == 0x5A, "self test: heap write lost", 0);
+	allocator_test_expect(((uint8_t *)spill)[0] == 0xA5, "self test: page write lost", 0);
+
+	kfree(middle);
+	kfree(spill);
+
+	allocator_test_expect(physical_memory_manager_get_free_pages() == baseline, "self test: heap and pages did not come back", physical_memory_manager_get_free_pages());
+
+	serial_write("Allocator self test passed!\r\n");
 }

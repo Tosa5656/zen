@@ -15,7 +15,6 @@
 #define PAGE_WRITE_THROUGH (1ULL << 3)
 #define PAGE_CACHE_DISABLE (1ULL << 4)
 #define PAGE_HUGE (1ULL << 7)
-#define PHYSICAL_MEMORY_MANAGER_BITMAP_BASE 0x400000ULL
 
 #define MEMORY_TYPE_USABLE 1
 #define MEMORY_TYPE_RESERVED 2
@@ -42,9 +41,6 @@ typedef struct
         uint32_t extended_attributes;
 } __attribute__((packed)) memory_map_entry_t;
 
-extern uint8_t* physical_memory_manager_bitmap;
-extern uint64_t physical_memory_manager_bitmap_size;
-extern uint64_t total_pages;
 extern uint64_t boot_alloc_current;
 extern __attribute__((aligned(4096))) pml4_table_t kernel_pml4;
 
@@ -57,8 +53,6 @@ void boot_alloc_init(void);
 uint64_t allocate_boot_page(void);
 
 uint64_t physical_memory_manager_get_max_ram(const boot_info_t *info);
-void physical_memory_manager_set_page_used(uint64_t page_index);
-void physical_memory_manager_set_page_free(uint64_t page_index);
 void physical_memory_manager_lock_region(uint64_t physical_address, uint64_t size);
 void physical_memory_manager_free_region(uint64_t physical_address, uint64_t size);
 void physical_memory_manager_free_acpi_reclaimable(const boot_info_t *info);

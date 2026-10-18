@@ -1,15 +1,11 @@
 #include "memory.h"
+#include "buddy.h"
 #include "serial.h"
 #include "panic.h"
 
-uint8_t* physical_memory_manager_bitmap = NULL;
-uint64_t physical_memory_manager_bitmap_size = 0;
-uint64_t total_pages = 0;
 uint64_t boot_alloc_current = 0;
 
 static uint64_t boot_alloc_access_offset = 0;
-static uint64_t free_pages = 0;
-static uint64_t next_free_hint = 0;
 static int page_table_allocator_is_pmm = 0;
 static uint64_t boot_alloc_end = 0;
 
@@ -42,160 +38,39 @@ uint64_t physical_memory_manager_get_max_ram(const boot_info_t *info)
 	return max_physical_address;
 }
 
-void physical_memory_manager_set_page_used(uint64_t page_index)
-{
-	uint64_t byte = page_index / 8;
-	uint8_t mask = (uint8_t)(1 << (page_index % 8));
-
-	if (physical_memory_manager_bitmap[byte] & mask)
-	{
-		return;
-	}
-
-	physical_memory_manager_bitmap[byte] |= mask;
-	free_pages--;
-}
-
-void physical_memory_manager_set_page_free(uint64_t page_index)
-{
-	uint64_t byte = page_index / 8;
-	uint8_t mask = (uint8_t)(1 << (page_index % 8));
-
-	if (!(physical_memory_manager_bitmap[byte] & mask))
-	{
-		return;
-	}
-
-	physical_memory_manager_bitmap[byte] &= (uint8_t)~mask;
-	free_pages++;
-}
-
 void physical_memory_manager_lock_region(uint64_t physical_address, uint64_t size)
 {
-	uint64_t start_page = physical_address / PAGE_SIZE;
-	uint64_t end_page = (physical_address + size + PAGE_SIZE - 1) / PAGE_SIZE;
-
-	for (uint64_t page = start_page; page < end_page; page++)
-	{
-		if (page < total_pages)
-		{
-			physical_memory_manager_set_page_used(page);
-		}
-	}
-}
-
-static int physical_memory_manager_page_is_free(uint64_t page_index)
-{
-	if (page_index >= total_pages)
-	{
-		return 0;
-	}
-
-	uint64_t byte = page_index / 8;
-	uint8_t mask = (uint8_t)(1 << (page_index % 8));
-
-	return (physical_memory_manager_bitmap[byte] & mask) == 0;
-}
-
-static int64_t physical_memory_manager_find_run(uint64_t count, uint64_t begin, uint64_t end)
-{
-	uint64_t run = 0;
-
-	for (uint64_t page = begin; page < end; page++)
-	{
-		if (physical_memory_manager_page_is_free(page))
-		{
-			run++;
-			if (run == count)
-			{
-				return (int64_t)(page - count + 1);
-			}
-		}
-		else
-		{
-			run = 0;
-		}
-	}
-
-	return -1;
+	buddy_lock_range(physical_address, size);
 }
 
 uint64_t physical_memory_manager_alloc_page(void)
 {
-	return physical_memory_manager_alloc_pages(1);
+	return buddy_alloc_page();
 }
 
 uint64_t physical_memory_manager_alloc_pages(uint64_t count)
 {
-	if (physical_memory_manager_bitmap == NULL || count == 0 || count > free_pages)
-	{
-		return 0;
-	}
-
-	uint64_t hint = (next_free_hint < total_pages) ? next_free_hint : 0;
-
-	int64_t first = physical_memory_manager_find_run(count, hint, total_pages);
-	if (first < 0)
-	{
-		first = physical_memory_manager_find_run(count, 0, total_pages);
-	}
-
-	if (first < 0)
-	{
-		return 0;
-	}
-
-	uint64_t first_page = (uint64_t)first;
-
-	for (uint64_t page = first_page; page < first_page + count; page++)
-	{
-		physical_memory_manager_set_page_used(page);
-	}
-
-	next_free_hint = first_page + count;
-
-	return first_page * PAGE_SIZE;
+	return buddy_alloc_pages(count);
 }
 
 void physical_memory_manager_free_page(uint64_t physical_address)
 {
-	uint64_t page_index = physical_address / PAGE_SIZE;
-
-	if (page_index < total_pages)
-	{
-		physical_memory_manager_set_page_free(page_index);
-	}
+	buddy_free_page(physical_address);
 }
 
 void physical_memory_manager_free_pages(uint64_t physical_address, uint64_t count)
 {
-	uint64_t first_page = physical_address / PAGE_SIZE;
-
-	for (uint64_t page = first_page; page < first_page + count && page < total_pages; page++)
-	{
-		physical_memory_manager_set_page_free(page);
-	}
-
-	if (first_page < next_free_hint)
-	{
-		next_free_hint = first_page;
-	}
+	buddy_free_pages(physical_address, count);
 }
 
 uint64_t physical_memory_manager_get_free_pages(void)
 {
-	return free_pages;
+	return buddy_get_free_pages();
 }
 
 void physical_memory_manager_free_region(uint64_t physical_address, uint64_t size)
 {
-	uint64_t start_page = physical_address / PAGE_SIZE;
-	uint64_t end_page = (physical_address + size + PAGE_SIZE - 1) / PAGE_SIZE;
-
-	for (uint64_t page = start_page; page < end_page && page < total_pages; page++)
-	{
-		physical_memory_manager_set_page_free(page);
-	}
+	buddy_free_range(physical_address, size);
 }
 
 void physical_memory_manager_free_acpi_reclaimable(const boot_info_t *info)
@@ -229,75 +104,33 @@ void physical_memory_manager_init(const boot_info_t *info)
 		return;
 	}
 
-	total_pages = max_physical_address / PAGE_SIZE;
-	physical_memory_manager_bitmap_size = total_pages / 8;
-	if (total_pages % 8 != 0) physical_memory_manager_bitmap_size++;
+	serial_field("max physical address", max_physical_address);
 
-	uint64_t bitmap_physical_address = 0;
-	for(uint64_t i = 0; i < info->memory_map_entries; i++)
-	{
-		if(memory_map[i].type != MEMORY_TYPE_USABLE)
-		{
-			continue;
-		}
-
-		uint64_t region_start = memory_map[i].base_address;
-		uint64_t region_end = region_start + memory_map[i].length;
-
-		if(PHYSICAL_MEMORY_MANAGER_BITMAP_BASE >= region_start && 
-		   PHYSICAL_MEMORY_MANAGER_BITMAP_BASE + physical_memory_manager_bitmap_size <= region_end)
-		{
-			bitmap_physical_address = PHYSICAL_MEMORY_MANAGER_BITMAP_BASE;
-			break;
-		}
-	}
-
-	if(bitmap_physical_address == 0)
-	{
-		serial_write("Could not find free RAM for PMM Bitmap!\n");
-		return;
-	}
-
-	physical_memory_manager_bitmap = (uint8_t*)bitmap_physical_address;
-
-	serial_field("Max physical address: ", max_physical_address);
-	serial_field("Total pages total: ", total_pages);
-	serial_field("Bitmap size: ", physical_memory_manager_bitmap_size);
-	serial_field("Bitmap phys allocation address: ", bitmap_physical_address);
-
-	for (uint64_t i = 0; i < physical_memory_manager_bitmap_size; i++)
-	{
-		physical_memory_manager_bitmap[i] = 0xFF;
-	}
+	boot_alloc_init();
 
 	uint64_t kernel_size = (uint64_t)_kernel_end - (uint64_t)_kernel_start;
 	virtual_memory_manager_init(info, max_physical_address, kernel_size);
 
-	physical_memory_manager_bitmap = (uint8_t*)(bitmap_physical_address + KERNEL_PHYSICAL_MAP_BASE);
+	buddy_init(max_physical_address);
 
 	for (uint64_t i = 0; i < info->memory_map_entries; i++)
 	{
-		if (memory_map[i].type == MEMORY_TYPE_USABLE)
+		if (memory_map[i].type != MEMORY_TYPE_USABLE)
 		{
-			uint64_t start_page = memory_map[i].base_address / PAGE_SIZE;
-			uint64_t end_page = (memory_map[i].base_address + memory_map[i].length) / PAGE_SIZE;
-
-			for (uint64_t page = start_page; page < end_page; page++)
-			{
-				if (page < total_pages)
-				{
-					physical_memory_manager_set_page_free(page);
-				}
-			}
+			continue;
 		}
+
+		buddy_free_range(memory_map[i].base_address, memory_map[i].length);
 	}
+
+	serial_field("free pages", buddy_get_free_pages());
 
 	physical_memory_manager_lock_protected_regions(info);
 
 	boot_alloc_end = boot_alloc_current;
 	page_table_allocator_is_pmm = 1;
 
-	serial_field("Free pages ", free_pages);
+	serial_field("free pages", buddy_get_free_pages());
 	serial_write("PMM inited successfully!\r\n");
 }
 
@@ -307,14 +140,6 @@ void physical_memory_manager_lock_protected_regions(const boot_info_t *info)
 
 	uint64_t kernel_physical_start = (uint64_t)_kernel_start;
 	physical_memory_manager_lock_region(kernel_physical_start, boot_alloc_current - kernel_physical_start);
-
-	if (physical_memory_manager_bitmap != NULL)
-	{
-		uint64_t bitmap_physical_address =
-			(uint64_t)physical_memory_manager_bitmap - KERNEL_PHYSICAL_MAP_BASE;
-
-		physical_memory_manager_lock_region(bitmap_physical_address, physical_memory_manager_bitmap_size);
-	}
 
 	physical_memory_manager_lock_region((uint64_t)info, info->size);
 	physical_memory_manager_lock_region(info->memory_map_address,
@@ -540,9 +365,10 @@ uint64_t virtual_memory_manager_map_anonymous(uint64_t virt, uint64_t size, uint
 
 void virtual_memory_manager_init(const boot_info_t *info, uint64_t max_ram, uint64_t kernel_size)
 {
-	boot_alloc_init();
+	uint64_t identity_end = (boot_alloc_current > 0x400000) ? boot_alloc_current : 0x400000;
+	identity_end = (identity_end + 0x1FFFFFULL) & ~0x1FFFFFULL;
 
-	for (uint64_t address = 0; address < 0x400000; address += PAGE_SIZE)
+	for (uint64_t address = 0; address < identity_end; address += PAGE_SIZE)
 	{
 		virtual_memory_manager_map_page(address, address, PAGE_WRITABLE);
 	}
@@ -575,6 +401,11 @@ void virtual_memory_manager_init(const boot_info_t *info, uint64_t max_ram, uint
 
 void boot_alloc_init(void)
 {
+	if (boot_alloc_current != 0)
+	{
+		return;
+	}
+
 	uint64_t raw_end = (uint64_t)&_kernel_end;
 	boot_alloc_current = (raw_end + 4095) & ~4095;
 }

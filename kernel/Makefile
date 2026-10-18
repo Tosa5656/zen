@@ -3,7 +3,7 @@ LD=x86_64-elf-ld
 AS=nasm
 ARCH=x86_64
 
-CFLAGS=-ffreestanding -O2 -Wall -Wextra -mno-red-zone -m64 -fno-pie -fno-pic -I../arch/$(ARCH)/
+CFLAGS=-ffreestanding -O2 -Wall -Wextra -mno-red-zone -m64 -fno-pie -fno-pic -I../arch/$(ARCH)/ -I. -Iallocators
 
 ARCH_CODE=../arch/$(ARCH)/
 
@@ -21,9 +21,11 @@ kernel: idt
 	$(CC) $(CFLAGS) -c gdt.c -o gdt.o
 	$(AS) -f elf64 gdt_flush.asm -o gdt_flush.o
 	$(CC) $(CFLAGS) -c panic.c -o panic.o
+	$(CC) $(CFLAGS) -c allocators/buddy.c -o buddy.o
+	$(CC) $(CFLAGS) -c allocators/slab.c -o slab.o
 	$(CC) $(CFLAGS) -c heap.c -o heap.o
 	$(CC) $(CFLAGS) -c keyboard.c -o keyboard.o
-	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o gdt.o gdt_flush.o panic.o heap.o keyboard.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o -o kernel.bin
+	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o gdt.o gdt_flush.o panic.o buddy.o slab.o heap.o keyboard.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o -o kernel.bin
 
 idt:
 	make -C ../arch/$(ARCH)/ idt

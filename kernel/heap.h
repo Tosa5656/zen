@@ -12,5 +12,6 @@ void *krealloc(void *pointer, uint64_t size);
 void kfree(void *pointer);
 
 void heap_print_stats(void);
+void allocator_self_test(void);
 
 #endif

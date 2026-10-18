@@ -6,6 +6,8 @@
 #include "apic.h"
 #include "gdt.h"
 #include "heap.h"
+#include "slab.h"
+#include "buddy.h"
 #include "keyboard.h"
 #include <idt.h>
 
@@ -20,20 +22,20 @@ static void dump_boot_info(const boot_info_t *info)
 		return;
 	}
 
-	serial_field("magic                       ", info->magic);
-	serial_field("size                        ", info->size);
-	serial_field("memory_map_address          ", info->memory_map_address);
-	serial_field("memory_map_entries          ", info->memory_map_entries);
-	serial_field("framebuffer_address         ", info->framebuffer_address);
-	serial_field("framebuffer_width           ", info->framebuffer_width);
-	serial_field("framebuffer_height          ", info->framebuffer_height);
-	serial_field("framebuffer_pitch           ", info->framebuffer_pitch);
-	serial_field("framebuffer_bpp             ", info->framebuffer_bpp);
-	serial_field("framebuffer_red_mask_shift  ", info->framebuffer_red_mask_shift);
+	serial_field("magic", info->magic);
+	serial_field("size", info->size);
+	serial_field("memory_map_address", info->memory_map_address);
+	serial_field("memory_map_entries", info->memory_map_entries);
+	serial_field("framebuffer_address", info->framebuffer_address);
+	serial_field("framebuffer_width", info->framebuffer_width);
+	serial_field("framebuffer_height", info->framebuffer_height);
+	serial_field("framebuffer_pitch", info->framebuffer_pitch);
+	serial_field("framebuffer_bpp", info->framebuffer_bpp);
+	serial_field("framebuffer_red_mask_shift", info->framebuffer_red_mask_shift);
 	serial_field("framebuffer_green_mask_shift", info->framebuffer_green_mask_shift);
-	serial_field("framebuffer_blue_mask_shift ", info->framebuffer_blue_mask_shift);
-	serial_field("acpi_rsdp_address           ", info->acpi_rsdp_address);
-	serial_field("smbios_address              ", info->smbios_address);
+	serial_field("framebuffer_blue_mask_shift", info->framebuffer_blue_mask_shift);
+	serial_field("acpi_rsdp_address", info->acpi_rsdp_address);
+	serial_field("smbios_address", info->smbios_address);
 }
 
 void kmain(boot_info_t *boot_info)
@@ -45,19 +47,25 @@ void kmain(boot_info_t *boot_info)
 	uint64_t kernel_end_physical = (uint64_t)_kernel_end;
 	uint64_t kernel_size = kernel_end_physical - kernel_start_physical;
 
-	serial_field("Kernel start physical ", kernel_start_physical);
-	serial_field("Kernel end physical ", kernel_end_physical);
-	serial_field("Kernel size in bytes ", kernel_size);
+	serial_field("kernel start physical", kernel_start_physical);
+	serial_field("kernel end physical", kernel_end_physical);
+	serial_field("kernel size in bytes", kernel_size);
 
 	physical_memory_manager_init(boot_info);
 
 	heap_init(boot_info);
+
+	slab_init();
 
 	acpi_init(boot_info);
 
 	acpi_relocate_tables();
 	physical_memory_manager_free_acpi_reclaimable(boot_info);
 	physical_memory_manager_lock_protected_regions(boot_info);
+
+	heap_print_stats();
+
+	allocator_self_test();
 
 	heap_print_stats();
 
@@ -79,6 +87,9 @@ void kmain(boot_info_t *boot_info)
 
 	heap_print_stats();
 
+	slab_print_details();
+	buddy_print_stats();
+
 	gdt_init();
 
 	idt_init();
@@ -90,12 +101,9 @@ void kmain(boot_info_t *boot_info)
 		uint8_t scancode;
 		while (keyboard_pop(&scancode))
 		{
-			serial_write("Key pressed! Scancode: ");
+			serial_write("Key pressed! Scancode = ");
 			serial_dec(scancode);
 			serial_write("\r\n");
 		}
-
-		serial_write("1 one second.\r\n");
-		sleep(1000);
 	}
 }
