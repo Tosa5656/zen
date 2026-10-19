@@ -2,6 +2,7 @@
 #include "memory.h"
 #include "gdt.h"
 #include "serial.h"
+#include "idt.h"
 #include "msr.h"
 
 thread_t* current_thread = NULL;

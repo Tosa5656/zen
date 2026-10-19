@@ -1,6 +1,7 @@
 #include "keyboard.h"
 #include "heap.h"
 #include "serial.h"
+#include "scheduler.h"
 
 #define KEYBOARD_BUFFER_SIZE 256
 
@@ -8,6 +9,8 @@ static uint8_t *buffer = 0;
 static uint64_t head = 0;
 static uint64_t tail = 0;
 static uint64_t dropped = 0;
+
+thread_t* keyboard_waiting_thread = NULL;
 
 static uint64_t interrupts_off(void)
 {

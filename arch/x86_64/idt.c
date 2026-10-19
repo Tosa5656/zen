@@ -6,6 +6,7 @@
 #include "io.h"
 #include "gdt.h"
 #include "keyboard.h"
+#include "scheduler.h"
 
 __attribute__((aligned(4096))) idt_entry_t idt_table[256] = {0};
 idt_ptr_t idt_pointer;
@@ -63,6 +64,8 @@ extern void irq14();
 extern void irq15();
 
 extern void isr_ignored();
+
+extern thread_t* keyboard_waiting_thread;
 
 static const char* exception_messages[] =
 {
@@ -184,6 +187,13 @@ void irq_handler(cpu_registers_t* registers)
 	else if (irq_number == 1)
 	{
 		keyboard_push(inb(0x60));
+
+		if (keyboard_waiting_thread != NULL)
+		{
+			keyboard_waiting_thread->state = THREAD_READY;
+			scheduler_enqueue(keyboard_waiting_thread);
+			keyboard_waiting_thread = NULL;
+		}
 	}
 	else
 	{

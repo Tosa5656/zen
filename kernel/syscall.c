@@ -7,9 +7,12 @@
 #include "serial.h"
 #include "keyboard.h"
 #include "gdt.h"
+#include "scheduler.h"
 
 extern void syscall_entry(void);
 extern __attribute__((noreturn)) void context_iretq(uint64_t *frame);
+
+extern thread_t* keyboard_waiting_thread;
 
 typedef uint64_t (*syscall_fn_t)(cpu_registers_t *registers);
 
@@ -99,7 +102,38 @@ static uint64_t sys_read(cpu_registers_t *registers)
 	uint64_t got = 0;
 
 	while (got < count && keyboard_pop(&buf[got]))
+	{
 		got++;
+	}
+
+	if (got > 0 || count == 0)
+	{
+		return got;
+	}
+
+	__asm__ volatile("cli");
+
+	if (keyboard_pop(&buf[got]))
+	{
+		__asm__ volatile("sti");
+		return 1;
+	}
+
+	keyboard_waiting_thread = current_thread;
+
+	current_thread->state = THREAD_BLOCKED;
+
+	uint64_t new_rsp = schedule_callback((uint64_t)registers);
+
+	__asm__ volatile("mov %0, %%rsp" :: "r"(new_rsp));
+	__asm__ volatile("sti");
+
+	if (keyboard_pop(&buf[got]))
+	{
+		got++;
+	}
+
+	return got;
 
 	return got;
 }

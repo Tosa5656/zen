@@ -17,7 +17,7 @@
 - Slab allocator [+]
 - Per-process PML4, unmap low memory from user space [+ +]
 - Syscalls (MSR LSTAR / sysret) [+]
-- Scheduler + context switch (FPU/SSE save) [- -]
+- Scheduler + context switch (FPU/SSE save) [+]
 - Process heap (mmap из PMM+VMM) [- -]
 - FAT32 driver [-]
 - ELF loader from disk [- -]
