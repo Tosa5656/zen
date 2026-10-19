@@ -3,6 +3,7 @@
 #include "memory.h"
 #include "panic.h"
 #include "serial.h"
+#include "spinlock.h"
 
 #define SLAB_MAGIC            0x534C41424D414743ULL
 #define SLAB_OBJECT_FREE_MAGIC 0xD01EFEEDD01EFEEDULL
@@ -43,6 +44,7 @@ static const uint64_t slab_class_sizes[SLAB_CLASS_COUNT] =
 };
 
 static slab_cache_t slab_caches[SLAB_CLASS_COUNT];
+static spinlock_t slab_lock = {0};
 
 static void slab_list_push(slab_t **head, slab_t *slab)
 {
@@ -171,9 +173,12 @@ void slab_init(void)
 
 void *slab_alloc(uint64_t size)
 {
+	spin_lock(&slab_lock);
+
 	int class_index = slab_class_for(size);
 	if (class_index < 0)
 	{
+		spin_unlock(&slab_lock);
 		return 0;
 	}
 
@@ -185,6 +190,7 @@ void *slab_alloc(uint64_t size)
 		slab = slab_grow(cache);
 		if (slab == 0)
 		{
+			spin_unlock(&slab_lock);
 			return 0;
 		}
 
@@ -204,6 +210,8 @@ void *slab_alloc(uint64_t size)
 		slab_list_push(&cache->full, slab);
 	}
 
+	spin_unlock(&slab_lock);
+
 	return object;
 }
 
@@ -219,10 +227,14 @@ int slab_owns(const void *pointer)
 
 void slab_free(void *pointer)
 {
+	spin_lock(&slab_lock);
+
 	slab_t *slab = slab_from_pointer(pointer);
 	if (slab == 0)
 	{
 		kernel_panic_value("slab_free: not a slab object", (uint64_t)pointer);
+		spin_unlock(&slab_lock);
+		return;
 	}
 
 	slab_cache_t *cache = slab->cache;
@@ -231,11 +243,15 @@ void slab_free(void *pointer)
 	if (slab->in_use == 0)
 	{
 		kernel_panic_value("slab_free: empty slab", (uint64_t)pointer);
+		spin_unlock(&slab_lock);
+		return;
 	}
 
 	if (object->free_magic == SLAB_OBJECT_FREE_MAGIC)
 	{
 		kernel_panic_value("slab_free: double free", (uint64_t)pointer);
+		spin_unlock(&slab_lock);
+		return;
 	}
 
 	int was_full = (slab->free_objects == 0);
@@ -263,17 +279,26 @@ void slab_free(void *pointer)
 		slab->magic = 0;
 		buddy_free_page(physical);
 	}
+
+	spin_unlock(&slab_lock);
 }
 
 uint64_t slab_usable_size(const void *pointer)
 {
+	spin_lock(&slab_lock);
+
 	slab_t *slab = slab_from_pointer(pointer);
 	if (slab == 0)
 	{
+		spin_unlock(&slab_lock);
 		return 0;
 	}
 
-	return slab->cache->object_size;
+	uint64_t result = slab->cache->object_size;
+
+	spin_unlock(&slab_lock);
+
+	return result;
 }
 
 void slab_print_stats(void)
@@ -281,11 +306,15 @@ void slab_print_stats(void)
 	uint64_t live = 0;
 	uint64_t reserved = 0;
 
+	spin_lock(&slab_lock);
+
 	for (int i = 0; i < SLAB_CLASS_COUNT; i++)
 	{
 		live += slab_caches[i].live_objects;
 		reserved += slab_caches[i].slab_count;
 	}
+
+	spin_unlock(&slab_lock);
 
 	serial_field("slab slabs", reserved);
 	serial_field("slab objects", live);
@@ -293,6 +322,8 @@ void slab_print_stats(void)
 
 void slab_print_details(void)
 {
+	spin_lock(&slab_lock);
+
 	for (int i = 0; i < SLAB_CLASS_COUNT; i++)
 	{
 		slab_cache_t *cache = &slab_caches[i];
@@ -302,4 +333,6 @@ void slab_print_details(void)
 		serial_field("  	objects", cache->live_objects);
 		serial_field("  	capacity", capacity);
 	}
+
+	spin_unlock(&slab_lock);
 }

@@ -9,7 +9,7 @@ ARCH_CODE=../arch/$(ARCH)/
 
 all: kernel
 
-kernel: idt cpu syscall user
+kernel: idt cpu syscall user spinlock
 	$(AS) -f elf64 kernel_entry.asm -o kernel_entry.o
 	$(CC) $(CFLAGS) -c kernel.c -o kernel.o
 	$(CC) $(CFLAGS) -c memory.c -o memory.o
@@ -28,7 +28,7 @@ kernel: idt cpu syscall user
 	$(CC) $(CFLAGS) -c scheduler.c -o scheduler.o
 	$(CC) $(CFLAGS) -c syscall.c -o syscall.o
 	$(CC) $(CFLAGS) -c usertest.c -o usertest.o
-	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o gdt.o gdt_flush.o panic.o buddy.o slab.o heap.o keyboard.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o $(ARCH_CODE)/cpu.o scheduler.o $(ARCH_CODE)/syscall.o syscall.o $(ARCH_CODE)/user.o usertest.o -o kernel.bin
+	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o gdt.o gdt_flush.o panic.o buddy.o slab.o heap.o keyboard.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o $(ARCH_CODE)/cpu.o scheduler.o $(ARCH_CODE)/syscall.o syscall.o $(ARCH_CODE)/user.o $(ARCH_CODE)/spinlock.o usertest.o -o kernel.bin
 
 idt:
 	make -C ../arch/$(ARCH)/ idt
@@ -41,6 +41,9 @@ syscall:
 
 user:
 	make -C ../arch/$(ARCH)/ user
+
+spinlock:
+	make -C ../arch/$(ARCH)/ spinlock
 
 clean:
 	rm -rf *.o

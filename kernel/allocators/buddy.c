@@ -2,6 +2,7 @@
 #include "memory.h"
 #include "panic.h"
 #include "serial.h"
+#include "spinlock.h"
 
 #define META_USED (1u << 7)
 #define META_SLAB (1u << 6)
@@ -19,6 +20,7 @@ static uint8_t *buddy_meta = 0;
 static uint64_t buddy_total_pages = 0;
 static uint64_t buddy_free_count = 0;
 static buddy_block_t *buddy_free_lists[BUDDY_MAX_ORDER + 1];
+static spinlock_t buddy_lock = {0};
 
 static void *buddy_page_pointer(uint64_t page)
 {
@@ -233,8 +235,11 @@ void buddy_init(uint64_t max_physical_address)
 
 uint64_t buddy_alloc_pages(uint64_t count)
 {
+	spin_lock(&buddy_lock);
+
 	if (buddy_meta == 0 || count == 0 || count > buddy_free_count)
 	{
+		spin_unlock(&buddy_lock);
 		return 0;
 	}
 
@@ -244,6 +249,7 @@ uint64_t buddy_alloc_pages(uint64_t count)
 		order++;
 		if (order > BUDDY_MAX_ORDER)
 		{
+			spin_unlock(&buddy_lock);
 			return 0;
 		}
 	}
@@ -256,6 +262,7 @@ uint64_t buddy_alloc_pages(uint64_t count)
 
 	if (found > BUDDY_MAX_ORDER)
 	{
+		spin_unlock(&buddy_lock);
 		return 0;
 	}
 
@@ -281,6 +288,8 @@ uint64_t buddy_alloc_pages(uint64_t count)
 		buddy_meta[page + i] = META_USED;
 	}
 
+	spin_unlock(&buddy_lock);
+
 	return page * PAGE_SIZE;
 }
 
@@ -296,6 +305,8 @@ void buddy_free_pages(uint64_t physical_address, uint64_t count)
 		return;
 	}
 
+	spin_lock(&buddy_lock);
+
 	uint64_t order = 0;
 	while (((uint64_t)1 << order) < count)
 	{
@@ -303,11 +314,14 @@ void buddy_free_pages(uint64_t physical_address, uint64_t count)
 		if (order > BUDDY_MAX_ORDER)
 		{
 			kernel_panic_value("buddy: free block too large", count);
+			spin_unlock(&buddy_lock);
 			return;
 		}
 	}
 
 	buddy_free_block(physical_address / PAGE_SIZE, order);
+
+	spin_unlock(&buddy_lock);
 }
 
 void buddy_free_page(uint64_t physical_address)
@@ -317,7 +331,13 @@ void buddy_free_page(uint64_t physical_address)
 
 uint64_t buddy_get_free_pages(void)
 {
-	return buddy_free_count;
+	uint64_t result = 0;
+
+	spin_lock(&buddy_lock);
+	result = buddy_free_count;
+	spin_unlock(&buddy_lock);
+
+	return result;
 }
 
 void buddy_lock_range(uint64_t physical_address, uint64_t size)
@@ -326,6 +346,8 @@ void buddy_lock_range(uint64_t physical_address, uint64_t size)
 	{
 		return;
 	}
+
+	spin_lock(&buddy_lock);
 
 	uint64_t start = physical_address / PAGE_SIZE;
 	uint64_t end = (physical_address + size + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -336,6 +358,7 @@ void buddy_lock_range(uint64_t physical_address, uint64_t size)
 	}
 	if (start >= end)
 	{
+		spin_unlock(&buddy_lock);
 		return;
 	}
 
@@ -376,6 +399,8 @@ void buddy_lock_range(uint64_t physical_address, uint64_t size)
 
 		page = overlap_end;
 	}
+
+	spin_unlock(&buddy_lock);
 }
 
 void buddy_free_range(uint64_t physical_address, uint64_t size)
@@ -385,8 +410,10 @@ void buddy_free_range(uint64_t physical_address, uint64_t size)
 		return;
 	}
 
+	spin_lock(&buddy_lock);
 	buddy_push_range(physical_address / PAGE_SIZE,
 		(physical_address + size + PAGE_SIZE - 1) / PAGE_SIZE);
+	spin_unlock(&buddy_lock);
 }
 
 void buddy_mark_slab(uint64_t physical_address, uint64_t order)
@@ -402,7 +429,9 @@ void buddy_mark_slab(uint64_t physical_address, uint64_t order)
 		return;
 	}
 
+	spin_lock(&buddy_lock);
 	buddy_meta[page] = (uint8_t)(META_USED | META_SLAB | (order & META_ORDER_MASK));
+	spin_unlock(&buddy_lock);
 }
 
 int buddy_page_is_slab(uint64_t physical_address)
@@ -418,7 +447,11 @@ int buddy_page_is_slab(uint64_t physical_address)
 		return 0;
 	}
 
-	return (buddy_meta[page] & (META_USED | META_SLAB)) == (META_USED | META_SLAB);
+	spin_lock(&buddy_lock);
+	int result = (buddy_meta[page] & (META_USED | META_SLAB)) == (META_USED | META_SLAB);
+	spin_unlock(&buddy_lock);
+
+	return result;
 }
 
 uint64_t buddy_page_order(uint64_t physical_address)
@@ -434,11 +467,17 @@ uint64_t buddy_page_order(uint64_t physical_address)
 		return 0;
 	}
 
-	return (uint64_t)(buddy_meta[page] & META_ORDER_MASK);
+	spin_lock(&buddy_lock);
+	uint64_t result = (uint64_t)(buddy_meta[page] & META_ORDER_MASK);
+	spin_unlock(&buddy_lock);
+
+	return result;
 }
 
 void buddy_print_stats(void)
 {
+	spin_lock(&buddy_lock);
+
 	serial_field("buddy free pages", buddy_free_count);
 
 	for (uint64_t order = 0; order <= BUDDY_MAX_ORDER; order++)
@@ -456,4 +495,6 @@ void buddy_print_stats(void)
 			serial_field("	pages", count << order);
 		}
 	}
+
+	spin_unlock(&buddy_lock);
 }

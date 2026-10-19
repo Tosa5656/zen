@@ -4,6 +4,7 @@
 #include "slab.h"
 #include "panic.h"
 #include "serial.h"
+#include "spinlock.h"
 
 #define HEAP_MAGIC_INUSE 0x4845415055534544ULL
 #define HEAP_MAGIC_FREE  0x4845415046524545ULL
@@ -39,6 +40,7 @@ static uint64_t heap_total = 0;
 static uint64_t heap_used = 0;
 
 static free_block_t *free_list_head = 0;
+static spinlock_t heap_lock = {0};
 
 static void free_list_remove(free_block_t *block)
 {
@@ -281,12 +283,15 @@ void *kmalloc(uint64_t size)
 		return 0;
 	}
 
+	spin_lock(&heap_lock);
+
 	if (size <= SLAB_MAX_OBJECT)
 	{
 		void *object = slab_alloc(size);
 
 		if (object != 0)
 		{
+			spin_unlock(&heap_lock);
 			return object;
 		}
 	}
@@ -299,7 +304,9 @@ void *kmalloc(uint64_t size)
 
 	if (need >= PAGE_SIZE)
 	{
-		return kmalloc_pages(need);
+		void *result = kmalloc_pages(need);
+		spin_unlock(&heap_lock);
+		return result;
 	}
 
 	for (int attempt = 0; attempt < 2; attempt++)
@@ -311,6 +318,8 @@ void *kmalloc(uint64_t size)
 			heap_take(block, need);
 			heap_used += block->header.size;
 
+			spin_unlock(&heap_lock);
+
 			return (uint8_t *)block + HEAP_HEADER_SIZE;
 		}
 
@@ -319,6 +328,8 @@ void *kmalloc(uint64_t size)
 			break;
 		}
 	}
+
+	spin_unlock(&heap_lock);
 
 	return 0;
 }
@@ -434,6 +445,8 @@ void kfree(void *pointer)
 		return;
 	}
 
+	spin_lock(&heap_lock);
+
 	uint64_t address = (uint64_t)pointer;
 
 	if (address >= heap_base && address < heap_end)
@@ -443,26 +456,34 @@ void kfree(void *pointer)
 		if (header->magic == HEAP_MAGIC_FREE)
 		{
 			kernel_panic_value("kfree: double free", address);
+			spin_unlock(&heap_lock);
+			return;
 		}
 
 		if (header->magic != HEAP_MAGIC_INUSE)
 		{
 			kernel_panic_value("kfree: bad pointer", address);
+			spin_unlock(&heap_lock);
+			return;
 		}
 
 		heap_used -= header->size;
 		heap_release((free_block_t *)header);
+		spin_unlock(&heap_lock);
 		return;
 	}
 
 	if (address < KERNEL_PHYSICAL_MAP_BASE)
 	{
 		kernel_panic_value("kfree: bad pointer", address);
+		spin_unlock(&heap_lock);
+		return;
 	}
 
 	if (buddy_page_is_slab(address - KERNEL_PHYSICAL_MAP_BASE))
 	{
 		slab_free(pointer);
+		spin_unlock(&heap_lock);
 		return;
 	}
 
@@ -471,11 +492,15 @@ void kfree(void *pointer)
 	if (header->magic == HEAP_MAGIC_FREE)
 	{
 		kernel_panic_value("kfree: double free", address);
+		spin_unlock(&heap_lock);
+		return;
 	}
 
 	if (header->magic != HEAP_MAGIC_INUSE)
 	{
 		kernel_panic_value("kfree: bad pointer", address);
+		spin_unlock(&heap_lock);
+		return;
 	}
 
 	heap_used -= header->size;
@@ -485,11 +510,15 @@ void kfree(void *pointer)
 
 	header->magic = 0;
 	physical_memory_manager_free_pages(physical, size / PAGE_SIZE);
+
+	spin_unlock(&heap_lock);
 }
 
 void heap_print_stats(void)
 {
 	uint64_t largest = 0;
+
+	spin_lock(&heap_lock);
 
 	for (free_block_t *block = free_list_head; block != 0; block = block->next)
 	{
@@ -503,6 +532,9 @@ void heap_print_stats(void)
 	serial_field("heap in use", heap_used);
 	serial_field("heap free", heap_total - heap_used);
 	serial_field("largest block", largest);
+
+	spin_unlock(&heap_lock);
+
 	slab_print_stats();
 	serial_field("free frames", physical_memory_manager_get_free_pages());
 }

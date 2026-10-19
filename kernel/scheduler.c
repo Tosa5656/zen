@@ -5,6 +5,7 @@
 #include "idt.h"
 #include "msr.h"
 #include "timer.h"
+#include "spinlock.h"
 
 thread_t* current_thread = NULL;
 thread_t* idle_thread = NULL;
@@ -15,6 +16,7 @@ thread_t* sleep_queue_head = NULL;
 extern volatile uint64_t system_ticks;
 
 static uint64_t next_thread_id = 1;
+static spinlock_t scheduler_lock = {0};
 
 static void scheduler_idle_loop(void)
 {
@@ -26,6 +28,8 @@ static void scheduler_idle_loop(void)
 
 void scheduler_enqueue(thread_t* thread)
 {
+	spin_lock(&scheduler_lock);
+
 	thread->state = THREAD_READY;
 	thread->next = NULL;
 	if(!ready_queue_head)
@@ -38,18 +42,24 @@ void scheduler_enqueue(thread_t* thread)
 		ready_queue_tail->next = thread;
 		ready_queue_tail = thread;
 	}
+
+	spin_unlock(&scheduler_lock);
 }
 
 thread_t* scheduler_dequeue(void)
 {
+	spin_lock(&scheduler_lock);
+
 	if (!ready_queue_head) return NULL;
-	thread_t* t = ready_queue_head;
+	thread_t* thread = ready_queue_head;
 	ready_queue_head = ready_queue_head->next;
 	if (!ready_queue_head)
 	{
 		ready_queue_tail = NULL;
 	}
-	return t;
+
+	spin_unlock(&scheduler_lock);
+	return thread;
 }
 
 void scheduler_sleep_enqueue(thread_t* thread)

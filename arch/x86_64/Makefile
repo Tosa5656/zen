@@ -21,6 +21,9 @@ syscall:
 user:
 	$(AS) -f elf64 user.asm -o user.o
 
+spinlock:
+	$(AS) -f elf64 spinlock.asm -o spinlock.o
+
 clean:
 	rm -f bootloader/bootloader_stage1.bin bootloader/bootloader_stage2.bin
 	rm -f *.o
