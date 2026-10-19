@@ -3,6 +3,7 @@
 #include "memory.h"
 #include "pic.h"
 #include "serial.h"
+#include "msr.h"
 
 #define IA32_APIC_BASE_MSR 0x1B
 #define APIC_BASE_ENABLE (1ULL << 11)
@@ -30,21 +31,6 @@
 static volatile uint32_t *lapic = NULL;
 static volatile uint32_t *ioapic = NULL;
 static bool apic_ready = false;
-
-static uint64_t read_msr(uint32_t msr)
-{
-	uint32_t low;
-	uint32_t high;
-
-	__asm__ volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
-
-	return ((uint64_t)high << 32) | low;
-}
-
-static void write_msr(uint32_t msr, uint64_t value)
-{
-	__asm__ volatile("wrmsr" :: "c"(msr), "a"((uint32_t)value), "d"((uint32_t)(value >> 32)));
-}
 
 static void lapic_write(uint32_t reg, uint32_t value)
 {

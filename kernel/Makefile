@@ -9,7 +9,7 @@ ARCH_CODE=../arch/$(ARCH)/
 
 all: kernel
 
-kernel: idt
+kernel: idt cpu syscall user
 	$(AS) -f elf64 kernel_entry.asm -o kernel_entry.o
 	$(CC) $(CFLAGS) -c kernel.c -o kernel.o
 	$(CC) $(CFLAGS) -c memory.c -o memory.o
@@ -25,11 +25,23 @@ kernel: idt
 	$(CC) $(CFLAGS) -c allocators/slab.c -o slab.o
 	$(CC) $(CFLAGS) -c heap.c -o heap.o
 	$(CC) $(CFLAGS) -c keyboard.c -o keyboard.o
-	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o gdt.o gdt_flush.o panic.o buddy.o slab.o heap.o keyboard.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o -o kernel.bin
+	$(CC) $(CFLAGS) -c syscall.c -o syscall.o
+	$(CC) $(CFLAGS) -c usertest.c -o usertest.o
+	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o gdt.o gdt_flush.o panic.o buddy.o slab.o heap.o keyboard.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o $(ARCH_CODE)/cpu.o $(ARCH_CODE)/syscall.o syscall.o $(ARCH_CODE)/user.o usertest.o -o kernel.bin
 
 idt:
 	make -C ../arch/$(ARCH)/ idt
 
+cpu:
+	make -C ../arch/$(ARCH)/ cpu
+
+syscall:
+	make -C ../arch/$(ARCH)/ syscall
+
+user:
+	make -C ../arch/$(ARCH)/ user
+
 clean:
 	rm -rf *.o
 	rm -rf *.bin
+	make -C ../arch/$(ARCH)/ clean

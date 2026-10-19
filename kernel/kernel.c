@@ -9,6 +9,8 @@
 #include "slab.h"
 #include "buddy.h"
 #include "keyboard.h"
+#include "syscall.h"
+#include "usertest.h"
 #include <idt.h>
 
 extern uint8_t _kernel_start[];
@@ -75,6 +77,10 @@ void kmain(boot_info_t *boot_info)
 	idt_init();
 
 	apic_init();
+
+	syscall_init();
+
+	usermode_test();
 
 	while(1)
 	{

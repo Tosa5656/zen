@@ -3,6 +3,7 @@ bits 64
 extern exception_handler
 extern irq_handler
 
+global isr_ignored
 global load_idt
 
 %macro ISR_NOERRCODE 1
@@ -97,6 +98,9 @@ isr_common_stub:
 
 	add rsp, 16
 
+	iretq
+
+isr_ignored:
 	iretq
 
 load_idt:
