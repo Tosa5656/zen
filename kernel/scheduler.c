@@ -1,0 +1,124 @@
+#include "scheduler.h"
+#include "memory.h"
+#include "gdt.h"
+#include "serial.h"
+#include "msr.h"
+
+thread_t* current_thread = NULL;
+thread_t* ready_queue_head = NULL;
+thread_t* ready_queue_tail = NULL;
+
+static uint64_t next_thread_id = 1;
+
+void scheduler_enqueue(thread_t* thread)
+{
+	thread->state = THREAD_READY;
+	thread->next = NULL;
+	if(!ready_queue_head)
+	{
+		ready_queue_head = thread;
+		ready_queue_tail = thread;
+	}
+	else
+	{
+		ready_queue_tail->next = thread;
+		ready_queue_tail = thread;
+	}
+}
+
+thread_t* scheduler_dequeue(void)
+{
+	if (!ready_queue_head) return NULL;
+	thread_t* t = ready_queue_head;
+	ready_queue_head = ready_queue_head->next;
+	if (!ready_queue_head)
+	{
+		ready_queue_tail = NULL;
+	}
+	return t;
+}
+
+thread_t* scheduler_create_user_thread(void* entry_point, uint64_t pml4_physical, uint64_t user_rsp)
+{
+	uint64_t tcb_physical = physical_memory_manager_alloc_page();
+	thread_t* thread = (thread_t*)physical_to_virtual(tcb_physical);
+
+	uint64_t kstack_physical = physical_memory_manager_alloc_page();
+	void* kstack_virtual = physical_to_virtual(kstack_physical);
+
+	thread->kernel_stack_base = kstack_virtual;
+	thread->page_directory = pml4_physical;
+	thread->id = next_thread_id++;
+
+	cpu_registers_t* ctx = (cpu_registers_t*)((uintptr_t)kstack_virtual + 4096 - sizeof(cpu_registers_t));
+
+	ctx->ss = GDT_UDATA;
+	ctx->rsp = user_rsp;
+	ctx->rflags = 0x202;
+	ctx->cs = GDT_UCODE;
+	ctx->rip = (uint64_t)entry_point;
+	ctx->interrupt_number = 32;
+	ctx->error_code = 0;
+
+	ctx->rax = ctx->rbx = ctx->rcx = ctx->rdx = 0;
+	ctx->rsi = ctx->rdi = ctx->rbp = 0;
+	ctx->r8 = ctx->r9 = ctx->r10 = ctx->r11 = 0;
+	ctx->r12 = ctx->r13 = ctx->r14 = ctx->r15 = 0;
+
+	thread->context = ctx;
+
+	scheduler_enqueue(thread);
+	return thread;
+}
+
+uint64_t schedule_callback(uint64_t old_rsp)
+{
+	if (!current_thread) return old_rsp;
+	current_thread->context = (cpu_registers_t*)old_rsp;
+
+	if (current_thread->state == THREAD_RUNNING && current_thread->kernel_stack_base != NULL)
+	{
+		scheduler_enqueue(current_thread);
+	}
+
+	thread_t* next_thread = scheduler_dequeue();
+	if (!next_thread)
+	{
+		next_thread = current_thread;
+	}
+
+	next_thread->state = THREAD_RUNNING;
+	current_thread = next_thread;
+
+	uint64_t active_cr3 = virtual_memory_manager_get_current_pml4();
+	if (active_cr3 != next_thread->page_directory)
+	{
+		virtual_memory_manager_switch_address_space(next_thread->page_directory);
+	}
+
+	tss_set_rsp0((uint64_t)next_thread->kernel_stack_base + 4096);
+
+	uint64_t gs_base_address = read_msr(IA32_GS_BASE_MSR);
+	if (gs_base_address != 0)
+	{
+		uint64_t* kernel_rsp_field = (uint64_t*)gs_base_address;
+		*kernel_rsp_field = (uint64_t)next_thread->kernel_stack_base + 4096;
+	}
+
+	return (uint64_t)next_thread->context;
+}
+
+void scheduler_init(void)
+{
+	uint64_t tcb_physical = physical_memory_manager_alloc_page();
+	thread_t* boot_thread = (thread_t*)physical_to_virtual(tcb_physical);
+
+	boot_thread->id = 0;
+	boot_thread->state = THREAD_RUNNING;
+	boot_thread->next = NULL;
+	boot_thread->kernel_stack_base = NULL;
+	boot_thread->page_directory = virtual_memory_manager_get_kernel_pml4();
+
+	current_thread = boot_thread;
+	serial_write("Scheduler initialized!\r\n");
+}

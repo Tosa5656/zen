@@ -2,9 +2,11 @@ bits 64
 
 extern exception_handler
 extern irq_handler
+extern schedule_callback
 
 global isr_ignored
 global load_idt
+global irq_common_stub
 
 %macro ISR_NOERRCODE 1
 global isr%1
@@ -145,6 +147,11 @@ irq_common_stub:
 	mov rdi, rsp
 	cld
 	call irq_handler
+
+	mov rdi, rsp
+	call schedule_callback
+
+	mov rsp, rax
 
 	pop r15
 	pop r14

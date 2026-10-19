@@ -2,6 +2,7 @@ bits 64
 
 global syscall_entry
 extern syscall_dispatch
+extern schedule_callback
 
 CPU_LOCAL_KERNEL_RSP equ 0
 CPU_LOCAL_USER_RSP equ 8
@@ -28,7 +29,7 @@ syscall_entry:
 	push qword USER_CS
 	push rcx
 	push qword 0
-	push qword 0
+	push qword 0x80
 
 	push rax
 	push rbx
@@ -50,12 +51,10 @@ syscall_entry:
 	cld
 	call syscall_dispatch
 
-	mov [rsp + FRAME_RAX], rax
-	mov rax, [rsp + FRAME_RIP]
-	mov [rsp + FRAME_RCX], rax
-	mov rax, [rsp + FRAME_RFLAGS]
-	or  rax, 0x200
-	mov [rsp + FRAME_R11], rax
+	mov [rsp + 14*8], rax
+	mov rdi, rsp
+	call schedule_callback
+	mov rsp, rax
 
 	pop r15
 	pop r14
@@ -72,6 +71,15 @@ syscall_entry:
 	pop rcx
 	pop rbx
 	pop rax
+
+	add rsp, 16
+
+	pop rcx
+	add rsp, 8
+	pop r11
+
+	pop qword [gs:CPU_LOCAL_USER_RSP]
+	add rsp, 8
 
 	mov rsp, [gs:CPU_LOCAL_USER_RSP]
 	swapgs

@@ -3,6 +3,7 @@
 #include "cpu.h"
 #include "gdt.h"
 #include "serial.h"
+#include "scheduler.h"
 
 extern const uint8_t user_main_body[];
 extern const uint8_t user_main_end[];
@@ -58,21 +59,12 @@ void usermode_test(void)
 		data_dst[i] = (uint8_t)user_message[i];
 	}
 
-	serial_field("usermode: code size", code_size);
-
-	/* кадр iretq в кольцо 3 */
-	uint64_t frame[5];
-
-	frame[0] = USER_CODE;
-	frame[1] = GDT_UCODE;
-	frame[2] = 0x202;
-	frame[3] = USER_STACK_END;
-	frame[4] = GDT_UDATA;
+	serial_field("usermode code size", code_size);
 
 	cpu_current()->kernel_rip = (uint64_t)usermode_after;
 	cpu_current()->kernel_saved_rsp = (uint64_t)physical_to_virtual(ret_phys) + PAGE_SIZE;
 
-	virtual_memory_manager_switch_address_space(pml4);
+	scheduler_create_user_thread((void*)USER_CODE, pml4, USER_STACK_END);
 
-	user_enter(frame);
+	serial_write("usermode task added to ready queue.\r\n");
 }

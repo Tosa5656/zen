@@ -150,9 +150,15 @@ void idt_init(void)
 	timer_init(100);
 
 	uint8_t irq_flags = IDT_TA_PRESENT | IDT_TA_DESCRIPTOR_DPL0 | IDT_TA_INTERRUPT_GATE;
+
+	void (*irq_stubs[16])(void) =
+	{
+		irq0, irq1, irq2, irq3, irq4, irq5, irq6, irq7, irq8,
+		irq9, irq10, irq11, irq12, irq13, irq14, irq15
+	};
 	for (uint8_t i = 0; i < 16; i++)
 	{
-		idt_set_gate(i + 32, isr_ignored, irq_flags);
+		idt_set_gate(i + 32, irq_stubs[i], irq_flags);
 	}
 
 	for (uint16_t i = 48; i < 256; i++)

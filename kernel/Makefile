@@ -25,9 +25,10 @@ kernel: idt cpu syscall user
 	$(CC) $(CFLAGS) -c allocators/slab.c -o slab.o
 	$(CC) $(CFLAGS) -c heap.c -o heap.o
 	$(CC) $(CFLAGS) -c keyboard.c -o keyboard.o
+	$(CC) $(CFLAGS) -c scheduler.c -o scheduler.o
 	$(CC) $(CFLAGS) -c syscall.c -o syscall.o
 	$(CC) $(CFLAGS) -c usertest.c -o usertest.o
-	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o gdt.o gdt_flush.o panic.o buddy.o slab.o heap.o keyboard.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o $(ARCH_CODE)/cpu.o $(ARCH_CODE)/syscall.o syscall.o $(ARCH_CODE)/user.o usertest.o -o kernel.bin
+	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o gdt.o gdt_flush.o panic.o buddy.o slab.o heap.o keyboard.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o $(ARCH_CODE)/cpu.o scheduler.o $(ARCH_CODE)/syscall.o syscall.o $(ARCH_CODE)/user.o usertest.o -o kernel.bin
 
 idt:
 	make -C ../arch/$(ARCH)/ idt

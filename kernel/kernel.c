@@ -11,7 +11,8 @@
 #include "keyboard.h"
 #include "syscall.h"
 #include "usertest.h"
-#include <idt.h>
+#include "idt.h"
+#include "scheduler.h"
 
 extern uint8_t _kernel_start[];
 extern uint8_t _kernel_end[];
@@ -77,6 +78,8 @@ void kmain(boot_info_t *boot_info)
 	idt_init();
 
 	apic_init();
+
+	scheduler_init();
 
 	syscall_init();
 
