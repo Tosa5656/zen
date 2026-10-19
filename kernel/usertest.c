@@ -4,21 +4,22 @@
 #include "gdt.h"
 #include "serial.h"
 #include "scheduler.h"
+#include "time.h"
 
 extern const uint8_t user_main_body[];
 extern const uint8_t user_main_end[];
-extern void user_enter(uint64_t *frame);
 
 #define USER_CODE      0x400000ULL
 #define USER_DATA      0x600000ULL
 #define USER_STACK_END 0x800000ULL
 
-static const char user_message[] = "Hello from ring 3!";
-
 static void usermode_after(void)
 {
 	serial_write("Back in kernel: EXIT syscall worked!\r\n");
-	for (;;) {}
+	for (;;)
+	{
+		__asm__ volatile("hlt");
+	}
 }
 
 void usermode_test(void)
@@ -46,20 +47,36 @@ void usermode_test(void)
 	}
 
 	size_t code_size = user_main_end - user_main_body;
-
 	uint8_t *code_dst = physical_to_virtual(code_phys);
 	for (size_t i = 0; i < code_size; i++)
 	{
 		code_dst[i] = user_main_body[i];
 	}
+	serial_field("usermode code size", code_size);
 
 	uint8_t *data_dst = physical_to_virtual(data_phys);
-	for (size_t i = 0; i < sizeof user_message; i++)
-	{
-		data_dst[i] = (uint8_t)user_message[i];
+
+	struct timespec *delay = (struct timespec *)(data_dst + 0);
+	delay->tv_sec = 1;
+	delay->tv_nsec = 500000000;
+
+	const char *msg1 = "User mode: Entering nanosleep for 1.5 seconds...\n";
+	size_t msg1_len = 0;
+	while (msg1[msg1_len]) {
+		data_dst[32 + msg1_len] = msg1[msg1_len];
+		msg1_len++;
 	}
 
-	serial_field("usermode code size", code_size);
+	const char *msg2 = "User mode: WOKE UP! nanosleep timer test passed!\n";
+	size_t msg2_len = 0;
+	while (msg2[msg2_len]) {
+		data_dst[128 + msg2_len] = msg2[msg2_len];
+		msg2_len++;
+	}
+
+	serial_field("USER_DATA timespec map at", USER_DATA);
+	serial_field("USER_DATA msg1 length", msg1_len);
+	serial_field("USER_DATA msg2 length", msg2_len);
 
 	cpu_current()->kernel_rip = (uint64_t)usermode_after;
 	cpu_current()->kernel_saved_rsp = (uint64_t)physical_to_virtual(ret_phys) + PAGE_SIZE;

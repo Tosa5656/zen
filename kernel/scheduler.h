@@ -19,6 +19,7 @@ typedef struct thread
 	uint64_t page_directory;
 	uint64_t id;
 	thread_state_t state;
+	uint64_t sleep_until_ticks;
 	struct thread* next;
 } thread_t;
 

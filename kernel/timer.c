@@ -1,7 +1,8 @@
 #include "timer.h"
 #include "io.h"
+#include "scheduler.h"
 
-static volatile uint64_t system_ticks = 0;
+volatile uint64_t system_ticks = 0;
 
 void timer_init(uint32_t frequency)
 {
@@ -16,8 +17,6 @@ void timer_init(uint32_t frequency)
 void timer_handler(void)
 {
 	system_ticks++;
-
-	if (system_ticks % 100 == 0) {}
 }
 
 uint64_t timer_get_ticks(void)

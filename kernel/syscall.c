@@ -8,11 +8,16 @@
 #include "keyboard.h"
 #include "gdt.h"
 #include "scheduler.h"
+#include "time.h"
+
+#define TIMER_HZ 100
+#define MS_PER_TICK (1000 / TIMER_HZ)
 
 extern void syscall_entry(void);
 extern __attribute__((noreturn)) void context_iretq(uint64_t *frame);
-
 extern thread_t* keyboard_waiting_thread;
+extern thread_t* current_thread;
+extern volatile uint64_t system_ticks;
 
 typedef uint64_t (*syscall_fn_t)(cpu_registers_t *registers);
 
@@ -138,6 +143,48 @@ static uint64_t sys_read(cpu_registers_t *registers)
 	return got;
 }
 
+static uint64_t sys_nanosleep(cpu_registers_t *registers)
+{
+	uint64_t req_user_address = registers->rdi;
+	uint64_t rem_user_address = registers->rsi;
+
+	if (!user_range_ok(req_user_address, sizeof(struct timespec), 0))
+		return (uint64_t)-1;
+
+	struct timespec* req = (struct timespec*)req_user_address;
+
+	if (req->tv_nsec < 0 || req->tv_nsec >= 1000000000L)
+		return (uint64_t)-1;
+
+	uint64_t ticks_to_sleep = (req->tv_sec * TIMER_HZ) + (req->tv_nsec / (1000000L * MS_PER_TICK));
+
+	if (ticks_to_sleep == 0)
+	{
+		return 0;
+	}
+
+	__asm__ volatile("cli");
+
+	current_thread->sleep_until_ticks = system_ticks + ticks_to_sleep;
+
+	extern void scheduler_sleep_enqueue(thread_t* thread);
+	scheduler_sleep_enqueue(current_thread);
+
+	uint64_t new_rsp = schedule_callback((uint64_t)registers);
+
+	__asm__ volatile("mov %0, %%rsp" :: "r"(new_rsp));
+	__asm__ volatile("sti");
+
+	if (rem_user_address != 0 && user_range_ok(rem_user_address, sizeof(struct timespec), 1))
+	{
+		struct timespec* rem = (struct timespec*)rem_user_address;
+		rem->tv_sec = 0;
+		rem->tv_nsec = 0;
+	}
+
+	return 0;
+}
+
 static uint64_t sys_exit(cpu_registers_t *registers)
 {
 	uint64_t code = registers->rdi;
@@ -162,9 +209,10 @@ static uint64_t sys_exit(cpu_registers_t *registers)
 
 static const syscall_fn_t syscall_table[SYSCALL_MAX + 1] =
 {
-	[SYSCALL_READ]  = sys_read,
-	[SYSCALL_WRITE] = sys_write,
-	[SYSCALL_EXIT]  = sys_exit,
+	[SYSCALL_READ]     = sys_read,
+	[SYSCALL_WRITE]    = sys_write,
+	[SYSCALL_NAONSLEEP] = sys_nanosleep,
+	[SYSCALL_EXIT]     = sys_exit,
 };
 
 void syscall_init(void)

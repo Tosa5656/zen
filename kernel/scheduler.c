@@ -4,11 +4,15 @@
 #include "serial.h"
 #include "idt.h"
 #include "msr.h"
+#include "timer.h"
 
 thread_t* current_thread = NULL;
 thread_t* idle_thread = NULL;
 thread_t* ready_queue_head = NULL;
 thread_t* ready_queue_tail = NULL;
+thread_t* sleep_queue_head = NULL;
+
+extern volatile uint64_t system_ticks;
 
 static uint64_t next_thread_id = 1;
 
@@ -47,6 +51,45 @@ thread_t* scheduler_dequeue(void)
 	}
 	return t;
 }
+
+void scheduler_sleep_enqueue(thread_t* thread)
+{
+	thread->state = THREAD_BLOCKED;
+	thread->next = sleep_queue_head;
+	sleep_queue_head = thread;
+}
+
+void scheduler_check_sleeping_threads(void)
+{
+	thread_t* previous = NULL;
+	thread_t* current = sleep_queue_head;
+
+	while (current != NULL)
+	{
+		if (system_ticks >= current->sleep_until_ticks)
+		{
+			thread_t* next = current->next;
+			if (previous == NULL)
+			{
+				sleep_queue_head = next;
+			}
+			else
+			{
+				previous->next = next;
+			}
+
+			scheduler_enqueue(current);
+
+			current = next;
+		}
+		else
+		{
+			previous = current;
+			current = current->next;
+		}
+	}
+}
+
 
 thread_t* scheduler_create_user_thread(void* entry_point, uint64_t pml4_physical, uint64_t user_rsp)
 {

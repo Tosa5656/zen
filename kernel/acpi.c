@@ -33,6 +33,16 @@ static acpi_header_t *acpi_lookup(uint64_t physical)
 	return (acpi_header_t *)physical_to_virtual(physical);
 }
 
+static void acpi_map_pages(uint64_t physical, uint32_t length)
+{
+	for (uint64_t addr = physical & ~(uint64_t)(PAGE_SIZE - 1);
+	     addr < physical + length;
+	     addr += PAGE_SIZE)
+	{
+		virtual_memory_manager_map_page(KERNEL_PHYSICAL_MAP_BASE + addr, addr, PAGE_WRITABLE);
+	}
+}
+
 static bool acpi_checksum_ok(const uint8_t *data, uint32_t length)
 {
 	uint8_t sum = 0;
@@ -247,6 +257,8 @@ void acpi_init(const boot_info_t *info)
 
 	acpi_rsdp_t *rsdp = (acpi_rsdp_t *)physical_to_virtual(info->acpi_rsdp_address);
 
+	acpi_map_pages(info->acpi_rsdp_address, sizeof(acpi_rsdp_t));
+
 	if (!acpi_signature_equals(rsdp->signature, "RSD PTR ", 8))
 	{
 		serial_write("ACPI: invalid RSDP signature!\r\n");
@@ -286,6 +298,8 @@ void acpi_init(const boot_info_t *info)
 		root_name = "RSDT";
 		entry_size = sizeof(uint32_t);
 	}
+
+	acpi_map_pages(acpi_root_physical, sizeof(acpi_header_t));
 
 	if (!acpi_signature_equals(root->signature, root_name, 4))
 	{
@@ -331,11 +345,18 @@ void acpi_init(const boot_info_t *info)
 			continue;
 		}
 
+		acpi_map_pages(table_physical, sizeof(acpi_header_t));
+
 		acpi_header_t *table = (acpi_header_t *)physical_to_virtual(table_physical);
 
 		serial_write("ACPI: table ");
 		serial_write_signature(table->signature);
-		serial_write(acpi_validate_header(table) ? " [ok]\r\n" : " [bad checksum]\r\n");
+
+		bool ok = acpi_validate_header(table);
+
+		acpi_map_pages(table_physical, table->length);
+
+		serial_write(ok ? " [ok]\r\n" : " [bad checksum]\r\n");
 	}
 
 	acpi_parse_madt();
