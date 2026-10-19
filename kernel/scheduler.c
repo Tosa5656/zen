@@ -5,10 +5,19 @@
 #include "msr.h"
 
 thread_t* current_thread = NULL;
+thread_t* idle_thread = NULL;
 thread_t* ready_queue_head = NULL;
 thread_t* ready_queue_tail = NULL;
 
 static uint64_t next_thread_id = 1;
+
+static void scheduler_idle_loop(void)
+{
+	while(1)
+	{
+		__asm__ volatile("hlt");
+	}
+}
 
 void scheduler_enqueue(thread_t* thread)
 {
@@ -76,7 +85,8 @@ uint64_t schedule_callback(uint64_t old_rsp)
 	if (!current_thread) return old_rsp;
 	current_thread->context = (cpu_registers_t*)old_rsp;
 
-	if (current_thread->state == THREAD_RUNNING && current_thread->kernel_stack_base != NULL)
+	if (current_thread->state == THREAD_RUNNING && current_thread != idle_thread
+	    && current_thread->kernel_stack_base != NULL)
 	{
 		scheduler_enqueue(current_thread);
 	}
@@ -84,7 +94,14 @@ uint64_t schedule_callback(uint64_t old_rsp)
 	thread_t* next_thread = scheduler_dequeue();
 	if (!next_thread)
 	{
-		next_thread = current_thread;
+		if(current_thread->state == THREAD_RUNNING)
+		{
+			next_thread = current_thread;
+		}
+		else
+		{
+			next_thread = idle_thread;
+		}
 	}
 
 	next_thread->state = THREAD_RUNNING;
@@ -120,5 +137,34 @@ void scheduler_init(void)
 	boot_thread->page_directory = virtual_memory_manager_get_kernel_pml4();
 
 	current_thread = boot_thread;
+
+	uint64_t tcb_idle_physical = physical_memory_manager_alloc_page();
+	idle_thread = (thread_t*)physical_to_virtual(tcb_idle_physical);
+
+	uint64_t kstack_idle_physical = physical_memory_manager_alloc_page();
+	void* kstack_idle_virtual = physical_to_virtual(kstack_idle_physical);
+
+	idle_thread->id = 0xFFFFFFFF;
+	idle_thread->state = THREAD_READY;
+	idle_thread->next = NULL;
+	idle_thread->kernel_stack_base = kstack_idle_virtual;
+	idle_thread->page_directory = virtual_memory_manager_get_kernel_pml4();
+
+	cpu_registers_t* ctx = (cpu_registers_t*)((uintptr_t)kstack_idle_virtual + 4096 - sizeof(cpu_registers_t));
+
+	ctx->ss = GDT_KDATA;
+	ctx->rsp = (uint64_t)kstack_idle_virtual + 4096 - 8;
+	ctx->rflags = 0x202;
+	ctx->cs = GDT_KCODE;
+	ctx->rip = (uint64_t)scheduler_idle_loop;
+	ctx->interrupt_number = 32;
+	ctx->error_code = 0;
+
+	ctx->rax = ctx->rbx = ctx->rcx = ctx->rdx = 0;
+	ctx->rsi = ctx->rdi = ctx->rbp = 0;
+	ctx->r8 = ctx->r9 = ctx->r10 = ctx->r11 = 0;
+	ctx->r12 = ctx->r13 = ctx->r14 = ctx->r15 = 0;
+
+	idle_thread->context = ctx;
 	serial_write("Scheduler initialized!\r\n");
 }
