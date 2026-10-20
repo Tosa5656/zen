@@ -10,12 +10,16 @@ IMAGE=zen.img
 DISK_SIZE=200 # Size in megabytes
 
 all: bootloader kernel
+
 clean:
 	rm -rf iso/
 	rm -rf *.img
 
 	make -C arch/$(ARCH) clean
 	make -C kernel clean
+
+run:
+	qemu-system-x86_64 -hda zen.img -m 2G -serial stdio
 
 bootloader:
 	make -C arch/$(ARCH) bootloader
