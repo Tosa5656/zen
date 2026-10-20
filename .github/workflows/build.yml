@@ -31,15 +31,11 @@ jobs:
       - name: Build disk image
         run: make image
 
-      - name: Build bootable ISO
-        run: make iso
-
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-files
           path: |
             zen.img
-            zen.iso
             release-version
             release-notes
