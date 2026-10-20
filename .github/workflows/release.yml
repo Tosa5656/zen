@@ -26,9 +26,7 @@ jobs:
           VERSION=$(cat release-version | xargs)
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
-          cat release-notes >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          printf 'RELEASE_BODY<<RELEASE_NOTES_EOF\n%s\nRELEASE_NOTES_EOF\n' "$(cat release-notes)" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -36,6 +34,6 @@ jobs:
           tag_name: ${{ env.VERSION }}
           name: Release ${{ env.VERSION }}
           body: ${{ env.RELEASE_BODY }}
-          files: zen.iso
+          files: zen.img
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
