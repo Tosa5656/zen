@@ -8,6 +8,8 @@
 #define PIT_COMMAND_PORT 0x43
 #define PIT_DATA_PORT_CH0 0x40
 
+#define SYSTEM_TICK_HZ 100
+
 extern volatile uint64_t system_ticks;
 
 void timer_init(uint32_t frequency);

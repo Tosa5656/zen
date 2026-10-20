@@ -20,6 +20,7 @@ FRAME_SIZE   equ 22 * 8
 section .text
 syscall_entry:
 	swapgs
+	cli
 	mov [gs:CPU_LOCAL_USER_RSP], rsp
 	mov rsp, [gs:CPU_LOCAL_KERNEL_RSP]
 
@@ -84,6 +85,29 @@ syscall_entry:
 	mov rsp, [gs:CPU_LOCAL_USER_RSP]
 	swapgs
 	o64 sysret
+
+global yield_iretq
+
+yield_iretq:
+	mov rsp, rdi
+	pop r15
+	pop r14
+	pop r13
+	pop r12
+	pop r11
+	pop r10
+	pop r9
+	pop r8
+	pop rbp
+	pop rdi
+	pop rsi
+	pop rdx
+	pop rcx
+	pop rbx
+	pop rax
+	add rsp, 16
+	swapgs
+	iretq
 
 global context_iretq
 context_iretq:

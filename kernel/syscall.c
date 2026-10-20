@@ -9,8 +9,9 @@
 #include "gdt.h"
 #include "scheduler.h"
 #include "time.h"
+#include "timer.h"
 
-#define TIMER_HZ 100
+#define TIMER_HZ SYSTEM_TICK_HZ
 #define MS_PER_TICK (1000 / TIMER_HZ)
 
 extern void syscall_entry(void);
@@ -128,25 +129,15 @@ static uint64_t sys_read(cpu_registers_t *registers)
 
 	current_thread->state = THREAD_BLOCKED;
 
+	extern void yield_iretq(uint64_t new_rsp);
 	uint64_t new_rsp = schedule_callback((uint64_t)registers);
-
-	__asm__ volatile("mov %0, %%rsp" :: "r"(new_rsp));
-	__asm__ volatile("sti");
-
-	if (keyboard_pop(&buf[got]))
-	{
-		got++;
-	}
-
-	return got;
-
-	return got;
+	yield_iretq(new_rsp);
+	__builtin_unreachable();
 }
 
 static uint64_t sys_nanosleep(cpu_registers_t *registers)
 {
 	uint64_t req_user_address = registers->rdi;
-	uint64_t rem_user_address = registers->rsi;
 
 	if (!user_range_ok(req_user_address, sizeof(struct timespec), 0))
 		return (uint64_t)-1;
@@ -166,45 +157,48 @@ static uint64_t sys_nanosleep(cpu_registers_t *registers)
 	__asm__ volatile("cli");
 
 	current_thread->sleep_until_ticks = system_ticks + ticks_to_sleep;
+	serial_write("nanosleep: sleeping until tick ");
+	serial_dec(current_thread->sleep_until_ticks);
+	serial_write(" (now ");
+	serial_dec(system_ticks);
+	serial_write(")\r\n");
 
 	extern void scheduler_sleep_enqueue(thread_t* thread);
 	scheduler_sleep_enqueue(current_thread);
 
+	extern void yield_iretq(uint64_t new_rsp);
 	uint64_t new_rsp = schedule_callback((uint64_t)registers);
-
-	__asm__ volatile("mov %0, %%rsp" :: "r"(new_rsp));
-	__asm__ volatile("sti");
-
-	if (rem_user_address != 0 && user_range_ok(rem_user_address, sizeof(struct timespec), 1))
-	{
-		struct timespec* rem = (struct timespec*)rem_user_address;
-		rem->tv_sec = 0;
-		rem->tv_nsec = 0;
-	}
-
-	return 0;
+	yield_iretq(new_rsp);
+	__builtin_unreachable();
 }
 
 static uint64_t sys_exit(cpu_registers_t *registers)
 {
 	uint64_t code = registers->rdi;
 
-	serial_field("Process exited with code", code);
+	serial_write("Process ");
+	serial_dec(current_thread->id);
+	serial_write(" exited with code: ");
+	serial_dec(code);
+	serial_write("\r\n");
 
-	if (cpu_current()->kernel_rip == 0 || cpu_current()->kernel_saved_rsp == 0)
-		kernel_panic("syscall: exit without saved kernel context");
+	__asm__ volatile("cli");
+
+	uint64_t user_pml4 = current_thread->page_directory;
+	virtual_memory_manager_destroy_address_space(user_pml4);
 
 	virtual_memory_manager_switch_address_space(virtual_memory_manager_get_kernel_pml4());
 
-	uint64_t frame[5];
+	extern void scheduler_kill_current_thread(void);
+	scheduler_kill_current_thread();
 
-	frame[0] = cpu_current()->kernel_rip;
-	frame[1] = GDT_KCODE;
-	frame[2] = 0x202;
-	frame[3] = cpu_current()->kernel_saved_rsp;
-	frame[4] = GDT_KDATA;
+	uint64_t new_rsp = schedule_callback((uint64_t)registers);
 
-	context_iretq(frame);
+	__asm__ volatile("mov %0, %%rsp" :: "r"(new_rsp));
+	__asm__ volatile("sti");
+
+	while(1) {}
+	__builtin_unreachable();
 }
 
 static const syscall_fn_t syscall_table[SYSCALL_MAX + 1] =

@@ -171,18 +171,26 @@ void idt_init(void)
 
 	load_idt((uint64_t)&idt_pointer);
 
-	__asm__ volatile("sti");
-
-	serial_write("IDT loaded and interrupts enabled!\r\n");
+	serial_write("IDT loaded!\r\n");
 }
 
 void irq_handler(cpu_registers_t* registers)
 {
 	uint64_t irq_number = registers->interrupt_number - 32;
 
+	if (apic_is_enabled())
+	{
+		apic_send_eoi();
+	}
+	else
+	{
+		pic_send_eoi(irq_number);
+	}
+
 	if (irq_number == 0)
 	{
 		timer_handler();
+		scheduler_check_sleeping_threads();
 	}
 	else if (irq_number == 1)
 	{
@@ -200,14 +208,5 @@ void irq_handler(cpu_registers_t* registers)
 		serial_write("Unhandled IRQ: ");
 		serial_dec(irq_number);
 		serial_write("\r\n");
-	}
-
-	if (apic_is_enabled())
-	{
-		apic_send_eoi();
-	}
-	else
-	{
-		pic_send_eoi(irq_number);
 	}
 }

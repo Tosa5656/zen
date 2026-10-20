@@ -3,6 +3,7 @@ bits 64
 extern exception_handler
 extern irq_handler
 extern schedule_callback
+extern scheduler_should_switch
 
 global isr_ignored
 global load_idt
@@ -148,11 +149,15 @@ irq_common_stub:
 	cld
 	call irq_handler
 
+	call scheduler_should_switch
+	test rax, rax
+	jz .no_switch
+
 	mov rdi, rsp
 	call schedule_callback
-
 	mov rsp, rax
 
+.no_switch:
 	pop r15
 	pop r14
 	pop r13

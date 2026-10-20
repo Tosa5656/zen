@@ -85,6 +85,8 @@ void kmain(boot_info_t *boot_info)
 
 	usermode_test();
 
+	__asm__ volatile("sti");
+
 	while(1)
 	{
 		uint8_t scancode;

@@ -12,6 +12,7 @@ thread_t* idle_thread = NULL;
 thread_t* ready_queue_head = NULL;
 thread_t* ready_queue_tail = NULL;
 thread_t* sleep_queue_head = NULL;
+thread_t* dead_queue_head = NULL;
 
 extern volatile uint64_t system_ticks;
 
@@ -22,6 +23,8 @@ static void scheduler_idle_loop(void)
 {
 	while(1)
 	{
+		scheduler_reclaim_dead_threads();
+
 		__asm__ volatile("hlt");
 	}
 }
@@ -50,12 +53,15 @@ thread_t* scheduler_dequeue(void)
 {
 	spin_lock(&scheduler_lock);
 
-	if (!ready_queue_head) return NULL;
-	thread_t* thread = ready_queue_head;
-	ready_queue_head = ready_queue_head->next;
-	if (!ready_queue_head)
+	thread_t* thread = NULL;
+	if (ready_queue_head)
 	{
-		ready_queue_tail = NULL;
+		thread = ready_queue_head;
+		ready_queue_head = ready_queue_head->next;
+		if (!ready_queue_head)
+		{
+			ready_queue_tail = NULL;
+		}
 	}
 
 	spin_unlock(&scheduler_lock);
@@ -89,6 +95,9 @@ void scheduler_check_sleeping_threads(void)
 			}
 
 			scheduler_enqueue(current);
+			serial_write("nanosleep: woken thread at tick ");
+			serial_dec(current->sleep_until_ticks);
+			serial_write("\r\n");
 
 			current = next;
 		}
@@ -134,6 +143,36 @@ thread_t* scheduler_create_user_thread(void* entry_point, uint64_t pml4_physical
 	return thread;
 }
 
+void scheduler_kill_current_thread(void)
+{
+	spin_lock(&scheduler_lock);
+
+	current_thread->state = THREAD_DEAD;
+
+	current_thread->next = dead_queue_head;
+	dead_queue_head = current_thread;
+
+	spin_unlock(&scheduler_lock);
+}
+
+void scheduler_reclaim_dead_threads(void)
+{
+	if (!dead_queue_head) return;
+
+	spin_lock(&scheduler_lock);
+	thread_t* thread = dead_queue_head;
+	dead_queue_head = dead_queue_head->next;
+	spin_unlock(&scheduler_lock);
+
+	uint64_t kstack_physical = VIRTUAL_TO_PHYSICAL(thread->kernel_stack_base);
+	physical_memory_manager_free_page(kstack_physical);
+
+	uint64_t tcb_physical = VIRTUAL_TO_PHYSICAL(thread);
+	physical_memory_manager_free_page(tcb_physical);
+
+	serial_write("Kernel resources of dead thread reclaimed.\r\n");
+}
+
 uint64_t schedule_callback(uint64_t old_rsp)
 {
 	if (!current_thread) return old_rsp;
@@ -158,6 +197,7 @@ uint64_t schedule_callback(uint64_t old_rsp)
 		}
 	}
 
+	thread_t* previous = current_thread;
 	next_thread->state = THREAD_RUNNING;
 	current_thread = next_thread;
 
@@ -167,16 +207,34 @@ uint64_t schedule_callback(uint64_t old_rsp)
 		virtual_memory_manager_switch_address_space(next_thread->page_directory);
 	}
 
-	tss_set_rsp0((uint64_t)next_thread->kernel_stack_base + 4096);
-
-	uint64_t gs_base_address = read_msr(IA32_GS_BASE_MSR);
-	if (gs_base_address != 0)
+	if (next_thread != previous)
 	{
-		uint64_t* kernel_rsp_field = (uint64_t*)gs_base_address;
-		*kernel_rsp_field = (uint64_t)next_thread->kernel_stack_base + 4096;
+		tss_set_rsp0((uint64_t)next_thread->kernel_stack_base + 4096);
+
+		uint64_t gs_base_address = read_msr(IA32_GS_BASE_MSR);
+		if (gs_base_address != 0)
+		{
+			uint64_t* kernel_rsp_field = (uint64_t*)gs_base_address;
+			*kernel_rsp_field = (uint64_t)next_thread->kernel_stack_base + 4096;
+		}
 	}
 
 	return (uint64_t)next_thread->context;
+}
+
+bool scheduler_should_switch(void)
+{
+	thread_t* t = ready_queue_head;
+	while (t != NULL)
+	{
+		if (t != current_thread)
+		{
+			return true;
+		}
+		t = t->next;
+	}
+
+	return false;
 }
 
 void scheduler_init(void)
@@ -192,11 +250,11 @@ void scheduler_init(void)
 
 	current_thread = boot_thread;
 
+	static uint8_t idle_kstack[16384] __attribute__((aligned(16)));
+	void* kstack_idle_virtual = idle_kstack;
+
 	uint64_t tcb_idle_physical = physical_memory_manager_alloc_page();
 	idle_thread = (thread_t*)physical_to_virtual(tcb_idle_physical);
-
-	uint64_t kstack_idle_physical = physical_memory_manager_alloc_page();
-	void* kstack_idle_virtual = physical_to_virtual(kstack_idle_physical);
 
 	idle_thread->id = 0xFFFFFFFF;
 	idle_thread->state = THREAD_READY;
@@ -204,10 +262,10 @@ void scheduler_init(void)
 	idle_thread->kernel_stack_base = kstack_idle_virtual;
 	idle_thread->page_directory = virtual_memory_manager_get_kernel_pml4();
 
-	cpu_registers_t* ctx = (cpu_registers_t*)((uintptr_t)kstack_idle_virtual + 4096 - sizeof(cpu_registers_t));
+	cpu_registers_t* ctx = (cpu_registers_t*)((uintptr_t)kstack_idle_virtual + 16384 - sizeof(cpu_registers_t));
 
 	ctx->ss = GDT_KDATA;
-	ctx->rsp = (uint64_t)kstack_idle_virtual + 4096 - 8;
+	ctx->rsp = (uint64_t)kstack_idle_virtual + 16384 - 8;
 	ctx->rflags = 0x202;
 	ctx->cs = GDT_KCODE;
 	ctx->rip = (uint64_t)scheduler_idle_loop;

@@ -4,6 +4,8 @@
 #include "pic.h"
 #include "serial.h"
 #include "msr.h"
+#include "io.h"
+#include "timer.h"
 
 #define IA32_APIC_BASE_MSR 0x1B
 #define APIC_BASE_ENABLE (1ULL << 11)
@@ -16,9 +18,16 @@
 #define LAPIC_LVT_LINT0 0x350
 #define LAPIC_LVT_LINT1 0x360
 #define LAPIC_LVT_ERROR 0x370
-
+#define LAPIC_DIVIDE_CONFIG 0x3E0
+#define LAPIC_TIMER_INIT_COUNT 0x380
+#define LAPIC_TIMER_CURRENT_COUNT 0x390
 #define LAPIC_SPURIOUS_VECTOR 0xFF
 #define LAPIC_LVT_MASKED (1U << 16)
+#define LAPIC_TIMER_PERIODIC (1U << 17)
+#define LAPIC_TIMER_DIV16 0x3
+
+#define PIT_COMMAND 0x43
+#define PIT_CH0_DATA 0x40
 
 #define IOAPIC_REGSEL 0x00
 #define IOAPIC_IOWIN 0x10
@@ -85,6 +94,46 @@ static void ioapic_route(uint32_t global_system_interrupt_base, uint32_t gsi, ui
 
 	ioapic_write(IOAPIC_REDIRECTION_TABLE + 2 * index, low);
 	ioapic_write(IOAPIC_REDIRECTION_TABLE + 2 * index + 1, high);
+}
+
+static uint16_t pit_read_ch0(void)
+{
+	outb(PIT_COMMAND, 0x00);
+
+	uint16_t low = inb(PIT_CH0_DATA);
+	uint16_t high = inb(PIT_CH0_DATA);
+
+	return (uint16_t)(low | (high << 8));
+}
+
+static uint32_t lapic_timer_calibrate(void)
+{
+	outb(PIT_COMMAND, 0x30);
+	outb(PIT_CH0_DATA, 0xFF);
+	outb(PIT_CH0_DATA, 0xFF);
+
+	lapic_write(LAPIC_DIVIDE_CONFIG, LAPIC_TIMER_DIV16);
+	lapic_write(LAPIC_TIMER_INIT_COUNT, 0xFFFFFFFF);
+
+	uint32_t lapic_start = lapic_read(LAPIC_TIMER_CURRENT_COUNT);
+	uint32_t timeout = 2000000;
+
+	while (pit_read_ch0() != 0 && timeout-- > 0)
+	{
+	}
+
+	uint32_t lapic_end = lapic_read(LAPIC_TIMER_CURRENT_COUNT);
+
+	uint64_t elapsed = (uint64_t)lapic_start - (uint64_t)lapic_end;
+
+	uint32_t count = (uint32_t)((elapsed * 1193182ULL) / (65536ULL * SYSTEM_TICK_HZ));
+
+	if (count == 0 || count > (6250000ULL / SYSTEM_TICK_HZ) * 16ULL)
+	{
+		count = (uint32_t)(6250000ULL / SYSTEM_TICK_HZ);
+	}
+
+	return count;
 }
 
 static acpi_interrupt_source_t *irq_to_source(acpi_madt_info_t *madt, uint8_t irq)
@@ -162,16 +211,21 @@ void apic_init(void)
 	{
 		serial_write("APIC: no IOAPIC in MADT, interrupts stay on PIC!\r\n");
 		apic_ready = false;
-		__asm__ volatile("sti");
 		return;
 	}
 
 	pic_disable();
 
+	uint32_t timer_count = lapic_timer_calibrate();
+
+	lapic_write(LAPIC_DIVIDE_CONFIG, LAPIC_TIMER_DIV16);
+	lapic_write(LAPIC_LVT_TIMER, VECTOR_TIMER | LAPIC_TIMER_PERIODIC);
+	lapic_write(LAPIC_TIMER_INIT_COUNT, timer_count);
+
+	serial_field("APIC: LAPIC timer count ", timer_count);
+
 	apic_ready = true;
 	serial_write("APIC: initialized\r\n");
-
-	__asm__ volatile("sti");
 }
 
 void apic_send_eoi(void)
