@@ -17,7 +17,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm parted mtools binutils-x86-64-linux-gnu
+          sudo apt-get install -y nasm parted mtools xorriso binutils-x86-64-linux-gnu
 
       - name: Install and configure x86_64 cross-compiler
         run: |
@@ -31,11 +31,15 @@ jobs:
       - name: Build disk image
         run: make image
 
+      - name: Build bootable ISO
+        run: make iso
+
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-files
           path: |
+            zen.img
             zen.iso
             release-version
             release-notes
