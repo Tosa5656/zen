@@ -3,6 +3,9 @@
 #include "memory.h"
 #include "pic.h"
 #include "serial.h"
+#include "msr.h"
+#include "io.h"
+#include "timer.h"
 
 #define IA32_APIC_BASE_MSR 0x1B
 #define APIC_BASE_ENABLE (1ULL << 11)
@@ -15,9 +18,16 @@
 #define LAPIC_LVT_LINT0 0x350
 #define LAPIC_LVT_LINT1 0x360
 #define LAPIC_LVT_ERROR 0x370
-
+#define LAPIC_DIVIDE_CONFIG 0x3E0
+#define LAPIC_TIMER_INIT_COUNT 0x380
+#define LAPIC_TIMER_CURRENT_COUNT 0x390
 #define LAPIC_SPURIOUS_VECTOR 0xFF
 #define LAPIC_LVT_MASKED (1U << 16)
+#define LAPIC_TIMER_PERIODIC (1U << 17)
+#define LAPIC_TIMER_DIV16 0x3
+
+#define PIT_COMMAND 0x43
+#define PIT_CH0_DATA 0x40
 
 #define IOAPIC_REGSEL 0x00
 #define IOAPIC_IOWIN 0x10
@@ -30,21 +40,6 @@
 static volatile uint32_t *lapic = NULL;
 static volatile uint32_t *ioapic = NULL;
 static bool apic_ready = false;
-
-static uint64_t read_msr(uint32_t msr)
-{
-	uint32_t low;
-	uint32_t high;
-
-	__asm__ volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
-
-	return ((uint64_t)high << 32) | low;
-}
-
-static void write_msr(uint32_t msr, uint64_t value)
-{
-	__asm__ volatile("wrmsr" :: "c"(msr), "a"((uint32_t)value), "d"((uint32_t)(value >> 32)));
-}
 
 static void lapic_write(uint32_t reg, uint32_t value)
 {
@@ -70,15 +65,8 @@ static void ioapic_write(uint32_t reg, uint32_t value)
 
 static void map_mmio(uint64_t physical)
 {
-	uint64_t before = boot_alloc_current;
-
-	virtual_memory_manager_map_page(physical, physical,
+	virtual_memory_manager_map_page(KERNEL_MMIO_BASE + physical, physical,
 		PAGE_WRITABLE | PAGE_WRITE_THROUGH | PAGE_CACHE_DISABLE);
-
-	if (boot_alloc_current > before)
-	{
-		physical_memory_manager_lock_region(before, boot_alloc_current - before);
-	}
 }
 
 static void ioapic_route(uint32_t global_system_interrupt_base, uint32_t gsi, uint8_t vector, uint16_t iso_flags)
@@ -106,6 +94,46 @@ static void ioapic_route(uint32_t global_system_interrupt_base, uint32_t gsi, ui
 
 	ioapic_write(IOAPIC_REDIRECTION_TABLE + 2 * index, low);
 	ioapic_write(IOAPIC_REDIRECTION_TABLE + 2 * index + 1, high);
+}
+
+static uint16_t pit_read_ch0(void)
+{
+	outb(PIT_COMMAND, 0x00);
+
+	uint16_t low = inb(PIT_CH0_DATA);
+	uint16_t high = inb(PIT_CH0_DATA);
+
+	return (uint16_t)(low | (high << 8));
+}
+
+static uint32_t lapic_timer_calibrate(void)
+{
+	outb(PIT_COMMAND, 0x30);
+	outb(PIT_CH0_DATA, 0xFF);
+	outb(PIT_CH0_DATA, 0xFF);
+
+	lapic_write(LAPIC_DIVIDE_CONFIG, LAPIC_TIMER_DIV16);
+	lapic_write(LAPIC_TIMER_INIT_COUNT, 0xFFFFFFFF);
+
+	uint32_t lapic_start = lapic_read(LAPIC_TIMER_CURRENT_COUNT);
+	uint32_t timeout = 2000000;
+
+	while (pit_read_ch0() != 0 && timeout-- > 0)
+	{
+	}
+
+	uint32_t lapic_end = lapic_read(LAPIC_TIMER_CURRENT_COUNT);
+
+	uint64_t elapsed = (uint64_t)lapic_start - (uint64_t)lapic_end;
+
+	uint32_t count = (uint32_t)((elapsed * 1193182ULL) / (65536ULL * SYSTEM_TICK_HZ));
+
+	if (count == 0 || count > (6250000ULL / SYSTEM_TICK_HZ) * 16ULL)
+	{
+		count = (uint32_t)(6250000ULL / SYSTEM_TICK_HZ);
+	}
+
+	return count;
 }
 
 static acpi_interrupt_source_t *irq_to_source(acpi_madt_info_t *madt, uint8_t irq)
@@ -142,7 +170,7 @@ void apic_init(void)
 	uint64_t apic_base = (lapic_physical & 0xFFFFFFFFFFFFF000ULL) | APIC_BASE_ENABLE;
 	write_msr(IA32_APIC_BASE_MSR, apic_base);
 
-	lapic = (volatile uint32_t *)lapic_physical;
+	lapic = (volatile uint32_t *)(KERNEL_MMIO_BASE + lapic_physical);
 
 	lapic_write(LAPIC_TPR, 0);
 	lapic_write(LAPIC_SVR, 0x100 | LAPIC_SPURIOUS_VECTOR);
@@ -160,7 +188,7 @@ void apic_init(void)
 		uint64_t ioapic_physical = madt->ioapics[0].address;
 		map_mmio(ioapic_physical);
 
-		ioapic = (volatile uint32_t *)ioapic_physical;
+		ioapic = (volatile uint32_t *)(KERNEL_MMIO_BASE + ioapic_physical);
 		gsi_base = madt->ioapics[0].global_system_interrupt_base;
 
 		uint32_t max_redirection_entry = (ioapic_read(IOAPIC_VERSION) >> 16) & 0xFF;
@@ -183,16 +211,21 @@ void apic_init(void)
 	{
 		serial_write("APIC: no IOAPIC in MADT, interrupts stay on PIC!\r\n");
 		apic_ready = false;
-		__asm__ volatile("sti");
 		return;
 	}
 
 	pic_disable();
 
+	uint32_t timer_count = lapic_timer_calibrate();
+
+	lapic_write(LAPIC_DIVIDE_CONFIG, LAPIC_TIMER_DIV16);
+	lapic_write(LAPIC_LVT_TIMER, VECTOR_TIMER | LAPIC_TIMER_PERIODIC);
+	lapic_write(LAPIC_TIMER_INIT_COUNT, timer_count);
+
+	serial_field("APIC: LAPIC timer count ", timer_count);
+
 	apic_ready = true;
 	serial_write("APIC: initialized\r\n");
-
-	__asm__ volatile("sti");
 }
 
 void apic_send_eoi(void)

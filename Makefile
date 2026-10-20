@@ -5,14 +5,16 @@ AS=nasm
 PARTED=parted
 MFORMAT=mformat
 MCOPY=mcopy
+XORRISO=xorriso
 
-IMAGE=zen.iso
+IMAGE=zen.img
+ISO=zen.iso
 DISK_SIZE=200 # Size in megabytes
 
 all: bootloader kernel
 clean:
 	rm -rf iso/
-	rm -rf *.iso
+	rm -rf *.iso *.img
 
 	make -C arch/$(ARCH) clean
 	make -C kernel clean
@@ -42,4 +44,7 @@ image: bootloader kernel
 	#$(MCOPY) -i $(IMAGE)@@1048576 arch/$(ARCH)/bootloader/uefi/bootx64.efi ::/EFI/BOOT/BOOTX64.EFI
 	$(MCOPY) -i $(IMAGE)@@1048576 kernel/kernel.bin ::/KERNEL.BIN
 
-.PHONY: all clean bootloader kernel image
+iso: image
+	$(XORRISO) -as mkisofs -b $(IMAGE) -hard-disk-boot -no-emul-boot -boot-load-size 4 -o $(ISO) $(IMAGE)
+
+.PHONY: all clean bootloader kernel image iso

@@ -2,8 +2,12 @@ bits 64
 
 extern exception_handler
 extern irq_handler
+extern schedule_callback
+extern scheduler_should_switch
 
+global isr_ignored
 global load_idt
+global irq_common_stub
 
 %macro ISR_NOERRCODE 1
 global isr%1
@@ -99,6 +103,9 @@ isr_common_stub:
 
 	iretq
 
+isr_ignored:
+	iretq
+
 load_idt:
 	lidt [rdi]
 	ret
@@ -142,6 +149,15 @@ irq_common_stub:
 	cld
 	call irq_handler
 
+	call scheduler_should_switch
+	test rax, rax
+	jz .no_switch
+
+	mov rdi, rsp
+	call schedule_callback
+	mov rsp, rax
+
+.no_switch:
 	pop r15
 	pop r14
 	pop r13

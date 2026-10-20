@@ -1,25 +1,27 @@
 ENTRY(_start)
 OUTPUT_FORMAT(binary)
 
+KERNEL_VIRTUAL_BASE = 0xFFFFFFFF80000000;
+
 SECTIONS
 {
-	. = 0x100000;
+	. = KERNEL_VIRTUAL_BASE + 0x100000;
 
 	_kernel_start = .;
 
-	.text : ALIGN(4K)
+	.text : AT(ADDR(.text) - KERNEL_VIRTUAL_BASE)
 	{
 		*(.text)
 		*(.text.*)
 	}
 
-	.rodata : ALIGN(4K)
+	.rodata : AT(ADDR(.rodata) - KERNEL_VIRTUAL_BASE)
 	{
 		*(.rodata)
 		*(.rodata.*)
 	}
 
-	.data : ALIGN(4K)
+	.data : AT(ADDR(.data) - KERNEL_VIRTUAL_BASE)
 	{
 		*(.data)
 		*(.data.*)
@@ -29,7 +31,7 @@ SECTIONS
 		*(.got.plt)
 	}
 
-	.bss : ALIGN(4K)
+	.bss : AT(ADDR(.bss) - KERNEL_VIRTUAL_BASE)
 	{
 		*(.bss)
 		*(.bss.*)

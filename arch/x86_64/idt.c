@@ -4,6 +4,9 @@
 #include "apic.h"
 #include "timer.h"
 #include "io.h"
+#include "gdt.h"
+#include "keyboard.h"
+#include "scheduler.h"
 
 __attribute__((aligned(4096))) idt_entry_t idt_table[256] = {0};
 idt_ptr_t idt_pointer;
@@ -60,6 +63,10 @@ extern void irq13();
 extern void irq14();
 extern void irq15();
 
+extern void isr_ignored();
+
+extern thread_t* keyboard_waiting_thread;
+
 static const char* exception_messages[] =
 {
     "Division By Zero", "Debug", "Non-Maskable Interrupt", "Breakpoint",
@@ -100,6 +107,11 @@ void exception_handler(cpu_registers_t* registers)
 	serial_field("Instruction RIP" , registers->rip);
 	serial_field("Code segment CS ", registers->cs);
 	serial_field("Stack pointer RSP", registers->rsp);
+	serial_field("RFLAGS", registers->rflags);
+	serial_field("RAX", registers->rax);
+	serial_field("RBX", registers->rbx);
+	serial_field("RBP", registers->rbp);
+	serial_field("RDI", registers->rdi);
 
 	if (registers->interrupt_number == 14)
 	{
@@ -134,6 +146,8 @@ void idt_init(void)
 		idt_set_gate(i, isr_stubs[i], flags);
 	}
 
+	idt_table[8].ist = IST_DOUBLE_FAULT;
+
 	pic_remap();
 
 	timer_init(100);
@@ -150,34 +164,19 @@ void idt_init(void)
 		idt_set_gate(i + 32, irq_stubs[i], irq_flags);
 	}
 
+	for (uint16_t i = 48; i < 256; i++)
+	{
+		idt_set_gate((uint8_t)i, isr_ignored, irq_flags);
+	}
+
 	load_idt((uint64_t)&idt_pointer);
 
-	__asm__ volatile("sti");
-
-	serial_write("IDT loaded and interrupts enabled!\r\n");
+	serial_write("IDT loaded!\r\n");
 }
 
 void irq_handler(cpu_registers_t* registers)
 {
 	uint64_t irq_number = registers->interrupt_number - 32;
-
-	if (irq_number == 0)
-	{
-		timer_handler();
-	}
-	else if (irq_number == 1)
-	{
-		uint8_t scancode = inb(0x60);
-		serial_write("Key pressed! Scancode: ");
-		serial_dec(scancode);
-		serial_write("\r\n");
-	}
-	else
-	{
-		serial_write("Unhandled IRQ: ");
-		serial_dec(irq_number);
-		serial_write("\r\n");
-	}
 
 	if (apic_is_enabled())
 	{
@@ -186,5 +185,28 @@ void irq_handler(cpu_registers_t* registers)
 	else
 	{
 		pic_send_eoi(irq_number);
+	}
+
+	if (irq_number == 0)
+	{
+		timer_handler();
+		scheduler_check_sleeping_threads();
+	}
+	else if (irq_number == 1)
+	{
+		keyboard_push(inb(0x60));
+
+		if (keyboard_waiting_thread != NULL)
+		{
+			keyboard_waiting_thread->state = THREAD_READY;
+			scheduler_enqueue(keyboard_waiting_thread);
+			keyboard_waiting_thread = NULL;
+		}
+	}
+	else
+	{
+		serial_write("Unhandled IRQ: ");
+		serial_dec(irq_number);
+		serial_write("\r\n");
 	}
 }
