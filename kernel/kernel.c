@@ -13,6 +13,7 @@
 #include "usertest.h"
 #include "idt.h"
 #include "scheduler.h"
+#include "ata.h"
 
 extern uint8_t _kernel_start[];
 extern uint8_t _kernel_end[];
@@ -82,6 +83,8 @@ void kmain(boot_info_t *boot_info)
 	scheduler_init();
 
 	syscall_init();
+
+	ata_init();
 
 	usermode_test();
 

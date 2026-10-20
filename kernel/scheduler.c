@@ -21,6 +21,8 @@ static spinlock_t scheduler_lock = {0};
 
 static void scheduler_idle_loop(void)
 {
+	__asm__ volatile("sti");
+
 	while(1)
 	{
 		scheduler_reclaim_dead_threads();

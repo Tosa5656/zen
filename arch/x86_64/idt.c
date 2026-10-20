@@ -7,6 +7,7 @@
 #include "gdt.h"
 #include "keyboard.h"
 #include "scheduler.h"
+#include "ata.h"
 
 __attribute__((aligned(4096))) idt_entry_t idt_table[256] = {0};
 idt_ptr_t idt_pointer;
@@ -202,6 +203,10 @@ void irq_handler(cpu_registers_t* registers)
 			scheduler_enqueue(keyboard_waiting_thread);
 			keyboard_waiting_thread = NULL;
 		}
+	}
+	else if (irq_number == 14 || irq_number == 15)
+	{
+		ata_irq_handler();
 	}
 	else
 	{

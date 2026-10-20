@@ -36,6 +36,8 @@
 
 #define VECTOR_TIMER 32
 #define VECTOR_KEYBOARD 33
+#define VECTOR_ATA_PRIMARY 46
+#define VECTOR_ATA_SECONDARY 47
 
 static volatile uint32_t *lapic = NULL;
 static volatile uint32_t *ioapic = NULL;
@@ -206,6 +208,15 @@ void apic_init(void)
 
 		ioapic_route(gsi_base, timer_gsi, VECTOR_TIMER, (timer_source != NULL) ? timer_source->flags : 0);
 		ioapic_route(gsi_base, keyboard_gsi, VECTOR_KEYBOARD, (keyboard_source != NULL) ? keyboard_source->flags : 0);
+
+		acpi_interrupt_source_t *ata_primary_source = irq_to_source(madt, 14);
+		acpi_interrupt_source_t *ata_secondary_source = irq_to_source(madt, 15);
+
+		uint32_t ata_primary_gsi = (ata_primary_source != NULL) ? ata_primary_source->global_system_interrupt : 14;
+		uint32_t ata_secondary_gsi = (ata_secondary_source != NULL) ? ata_secondary_source->global_system_interrupt : 15;
+
+		ioapic_route(gsi_base, ata_primary_gsi, VECTOR_ATA_PRIMARY, (ata_primary_source != NULL) ? ata_primary_source->flags : 0);
+		ioapic_route(gsi_base, ata_secondary_gsi, VECTOR_ATA_SECONDARY, (ata_secondary_source != NULL) ? ata_secondary_source->flags : 0);
 	}
 	else
 	{
