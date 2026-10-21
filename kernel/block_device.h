@@ -8,7 +8,7 @@
 typedef struct block_device
 {
 	uint32_t id;
-	const char* name;
+	char name[32];
 	uint64_t total_sectors;
 
 	int (*read_blocks)(struct block_device* dev, uint64_t lba, uint32_t count, void* buffer);

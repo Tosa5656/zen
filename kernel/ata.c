@@ -3,8 +3,9 @@
 #include "serial.h"
 #include "spinlock.h"
 #include "mbr.h"
+#include "gpt.h"
 
-#define MAX_PARTITIONS 8
+#define MAX_PARTITIONS 128
 #define ATA_WAIT_TIMEOUT 2000000
 
 static volatile thread_t* ata_waiting_thread = NULL;
@@ -15,6 +16,43 @@ static ata_private_t ata_private_data[4];
 static uint32_t phys_disk_count = 0;
 static block_device_t partition_devices[MAX_PARTITIONS];
 static uint32_t partition_count = 0;
+
+/* TODO: Remove to libc */
+static void kernel_itoa(uint64_t value, char* str, int base)
+{
+    char *rc, *ptr;
+    char tmp[64];
+    int c;
+
+    ptr = tmp;
+    do {
+        c = value % base;
+        *ptr++ = (c < 10) ? (c + '0') : (c - 10 + 'a');
+    } while (value /= base);
+
+    rc = str;
+    while (ptr > tmp) {
+        *rc++ = *--ptr;
+    }
+    *rc = '\0';
+}
+
+static void kernel_strcat(char* dest, const char* src)
+{
+    while (*dest) dest++;
+    while ((*dest++ = *src++));
+}
+
+static void kernel_strcat_n(char* dest, const char* src, uint32_t cap)
+{
+    uint32_t len = 0;
+    while (len < cap && dest[len] != '\0') len++;
+    while (len + 1 < cap && *src != '\0')
+    {
+        dest[len++] = *src++;
+    }
+    dest[len] = '\0';
+}
 
 void ata_init(void)
 {
@@ -34,13 +72,14 @@ void ata_init(void)
 			if (phys_disk_count < 4)
 			{
 				uint32_t idx = phys_disk_count++;
-				
+
 				ata_private_data[idx].base_port = bases[i];
 				ata_private_data[idx].drive_head = heads[i];
 
 				block_device_t* dev = &ata_physical_devices[idx];
 				dev->id = idx;
-				dev->name = names[i];
+				dev->name[0] = '\0';
+				kernel_strcat_n(dev->name, names[i], sizeof(dev->name));
 				dev->total_sectors = sectors;
 				dev->read_blocks = ata_block_read_adapter;
 				dev->write_blocks = ata_block_write_adapter;
@@ -152,7 +191,7 @@ int ata_write_sector_raw(uint16_t base_port, uint8_t drive_head, uint32_t lba, c
 {
 	spin_lock(&ata_lock);
 	ata_irq_fired = 0;
-	
+
 	ata_waiting_thread = current_thread;
 	ata_waiting_thread->state = THREAD_BLOCKED;
 
@@ -245,14 +284,18 @@ int ata_block_write_adapter(struct block_device* dev, uint64_t lba, uint32_t cou
 int partition_read_adapter(struct block_device* dev, uint64_t lba, uint32_t count, void* buffer)
 {
 	block_device_t* parent_disk = (block_device_t*)dev->private_data;
+	if (parent_disk == NULL || parent_disk->read_blocks == NULL) return -1;
+
 	uint64_t parent_lba = lba + dev->id;
+	if (lba + count > dev->total_sectors) return -1;
+	if (parent_lba + count > parent_disk->total_sectors) return -1;
+
 	return parent_disk->read_blocks(parent_disk, parent_lba, count, buffer);
 }
 
 void ata_parse_mbr(block_device_t* phys_dev)
 {
 	uint16_t sector_buffer[256];
-	
 	if (phys_dev->read_blocks(phys_dev, 0, 1, sector_buffer) != 0) return;
 
 	mbr_sector_t* mbr = (mbr_sector_t*)sector_buffer;
@@ -263,15 +306,25 @@ void ata_parse_mbr(block_device_t* phys_dev)
 		mbr_partition_t* part = &mbr->partitions[i];
 		if (part->total_sectors == 0) continue;
 
+		if (part->partition_type == 0xEE)
+		{
+			serial_write("ATA MBR: Protective MBR detected. Switching to GPT parser.\r\n");
+			ata_parse_gpt(phys_dev);
+			return;
+		}
+
 		if (partition_count < MAX_PARTITIONS)
 		{
 			block_device_t* p_dev = &partition_devices[partition_count++];
-			p_dev->id = part->starting_lba; 
-			
-			if (phys_dev->id == 0) p_dev->name = (i == 0) ? "hd0p1" : ((i == 1) ? "hd0p2" : "hd0p3");
-			else if (phys_dev->id == 1) p_dev->name = (i == 0) ? "hd1p1" : ((i == 1) ? "hd1p2" : "hd1p3");
-			else if (phys_dev->id == 2) p_dev->name = (i == 0) ? "hd2p1" : ((i == 1) ? "hd2p2" : "hd2p3");
-			else p_dev->name = (i == 0) ? "hd3p1" : ((i == 1) ? "hd3p2" : "hd3p3");
+			p_dev->id = part->starting_lba;
+
+			p_dev->name[0] = '\0';
+			kernel_strcat_n(p_dev->name, phys_dev->name, sizeof(p_dev->name));
+			kernel_strcat_n(p_dev->name, "p", sizeof(p_dev->name));
+
+			char part_num_buf[12];
+			kernel_itoa(i + 1, part_num_buf, 10);
+			kernel_strcat_n(p_dev->name, part_num_buf, sizeof(p_dev->name));
 
 			p_dev->total_sectors = part->total_sectors;
 			p_dev->read_blocks = partition_read_adapter;
@@ -280,5 +333,141 @@ void ata_parse_mbr(block_device_t* phys_dev)
 
 			block_device_register(p_dev);
 		}
+	}
+}
+
+void ata_parse_gpt(block_device_t* phys_dev)
+{
+	uint16_t header_buffer[256];
+
+	serial_write("ATA GPT: Parsing GPT for ");
+	serial_write(phys_dev->name);
+	serial_write("...\r\n");
+
+	if (phys_dev->read_blocks(phys_dev, 1, 1, header_buffer) != 0)
+	{
+		serial_write("ATA GPT: Failed to read LBA 1\r\n");
+		return;
+	}
+
+	gpt_header_t* gpt = (gpt_header_t*)header_buffer;
+
+	if (gpt->signature != 0x5452415020494645ULL)
+	{
+		serial_write("ATA GPT: Invalid GPT signature. Skipping.\r\n");
+		return;
+	}
+
+	if (gpt->size_of_partition_entry < 128 || gpt->size_of_partition_entry > 512)
+	{
+		serial_write("ATA GPT: Invalid partition entry size. Skipping.\r\n");
+		return;
+	}
+
+	if (gpt->size_of_partition_entry % 8 != 0)
+	{
+		serial_write("ATA GPT: Unaligned partition entry size. Skipping.\r\n");
+		return;
+	}
+
+	uint32_t max_entries = 512 / gpt->size_of_partition_entry;
+	if (gpt->num_partition_entries == 0 ||
+	    gpt->num_partition_entries > 512 ||
+	    gpt->partition_entry_lba == 0 ||
+	    gpt->partition_entry_lba >= phys_dev->total_sectors)
+	{
+		serial_write("ATA GPT: Implausible header fields. Skipping.\r\n");
+		return;
+	}
+
+	uint16_t entry_buffer[256];
+	uint32_t entries_per_sector = max_entries;
+
+	uint64_t current_entry_lba = gpt->partition_entry_lba;
+	uint32_t processed_entries = 0;
+
+	while (processed_entries < gpt->num_partition_entries)
+	{
+		if (current_entry_lba >= phys_dev->total_sectors)
+		{
+			serial_write("ATA GPT: Partition table runs past end of disk. Stopping.\r\n");
+			break;
+		}
+
+		if (phys_dev->read_blocks(phys_dev, current_entry_lba, 1, entry_buffer) != 0)
+		{
+			serial_write("ATA GPT: Failed to read partition entry sector\r\n");
+			break;
+		}
+
+		for (uint32_t i = 0; i < entries_per_sector; i++)
+		{
+			uintptr_t offset = i * gpt->size_of_partition_entry;
+			gpt_entry_t* entry = (gpt_entry_t*)((uintptr_t)entry_buffer + offset);
+
+			const uint8_t* type_guid = (const uint8_t*)&entry->partition_type_guid;
+			int type_is_empty = 1;
+			for (int b = 0; b < 16; b++)
+			{
+				if (type_guid[b] != 0)
+				{
+					type_is_empty = 0;
+					break;
+				}
+			}
+			if (type_is_empty)
+			{
+				processed_entries++;
+				continue;
+			}
+
+			uint64_t start_lba = entry->starting_lba;
+			uint64_t end_lba = entry->ending_lba;
+
+			if (end_lba < start_lba ||
+			    start_lba == 0 ||
+			    end_lba >= phys_dev->total_sectors)
+			{
+				serial_write("ATA GPT: Partition entry out of range. Skipping.\r\n");
+				processed_entries++;
+				continue;
+			}
+
+			uint64_t part_sectors = (end_lba - start_lba) + 1;
+
+			serial_write("ATA: Found GPT Partition ");
+			serial_dec(partition_count + 1);
+			serial_write(": Start LBA: ");
+			serial_dec(start_lba);
+			serial_write(", Sectors: ");
+			serial_dec(part_sectors);
+			serial_write("\r\n");
+
+			if (partition_count < MAX_PARTITIONS)
+			{
+				block_device_t* p_dev = &partition_devices[partition_count++];
+				p_dev->id = (uint32_t)start_lba;
+
+				p_dev->name[0] = '\0';
+				kernel_strcat_n(p_dev->name, phys_dev->name, sizeof(p_dev->name));
+				kernel_strcat_n(p_dev->name, "p", sizeof(p_dev->name));
+
+				char part_num_buf[16];
+				kernel_itoa(partition_count, part_num_buf, 10);
+				kernel_strcat_n(p_dev->name, part_num_buf, sizeof(p_dev->name));
+
+				p_dev->total_sectors = part_sectors;
+				p_dev->read_blocks = partition_read_adapter;
+				p_dev->write_blocks = phys_dev->write_blocks;
+				p_dev->private_data = (void*)phys_dev;
+
+				block_device_register(p_dev);
+			}
+
+			processed_entries++;
+			if (processed_entries >= gpt->num_partition_entries) break;
+		}
+
+		current_entry_lba++;
 	}
 }

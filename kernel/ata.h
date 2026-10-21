@@ -43,6 +43,7 @@ int ata_read_sector_raw(uint16_t base_port, uint8_t drive_head, uint32_t lba, ui
 int ata_write_sector_raw(uint16_t base_port, uint8_t drive_head, uint32_t lba, const uint16_t* buffer);
 uint64_t ata_identify_drive(uint16_t base, uint8_t head);
 void ata_parse_mbr(block_device_t* physical_dev);
+void ata_parse_gpt(block_device_t* phys_dev);
 int ata_block_read_adapter(struct block_device* dev, uint64_t lba, uint32_t count, void* buffer);
 int ata_block_write_adapter(struct block_device* dev, uint64_t lba, uint32_t count, void* buffer);
 

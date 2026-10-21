@@ -114,6 +114,8 @@ void physical_memory_manager_init(const boot_info_t *info)
 
 	buddy_init(max_physical_address);
 
+	uint64_t reserved_end_page = (boot_alloc_current + PAGE_SIZE - 1) / PAGE_SIZE;
+
 	for (uint64_t i = 0; i < info->memory_map_entries; i++)
 	{
 		if (memory_map[i].type != MEMORY_TYPE_USABLE)
@@ -121,7 +123,16 @@ void physical_memory_manager_init(const boot_info_t *info)
 			continue;
 		}
 
-		buddy_free_range(memory_map[i].base_address, memory_map[i].length);
+		uint64_t start_page = (memory_map[i].base_address + PAGE_SIZE - 1) / PAGE_SIZE;
+		uint64_t end_page = (memory_map[i].base_address + memory_map[i].length) / PAGE_SIZE;
+
+		uint64_t from_page = (start_page > reserved_end_page) ? start_page : reserved_end_page;
+		if (from_page >= end_page)
+		{
+			continue;
+		}
+
+		buddy_free_range(from_page * PAGE_SIZE, (end_page - from_page) * PAGE_SIZE);
 	}
 
 	serial_field("free pages", buddy_get_free_pages());
