@@ -37,12 +37,6 @@ static void kernel_itoa(uint64_t value, char* str, int base)
     *rc = '\0';
 }
 
-static void kernel_strcat(char* dest, const char* src)
-{
-    while (*dest) dest++;
-    while ((*dest++ = *src++));
-}
-
 static void kernel_strcat_n(char* dest, const char* src, uint32_t cap)
 {
     uint32_t len = 0;

@@ -18,5 +18,7 @@ typedef struct block_device
 } block_device_t;
 
 void block_device_register(block_device_t* dev);
+block_device_t* block_device_get(uint32_t index);
+uint32_t block_device_get_count(void);
 
 #endif

@@ -14,6 +14,8 @@
 #include "idt.h"
 #include "scheduler.h"
 #include "ata.h"
+#include "vfs.h"
+#include "fd.h"
 
 extern uint8_t _kernel_start[];
 extern uint8_t _kernel_end[];
@@ -60,6 +62,8 @@ void kmain(boot_info_t *boot_info)
 	heap_init(boot_info);
 
 	slab_init();
+
+	vfs_init();
 
 	acpi_init(boot_info);
 

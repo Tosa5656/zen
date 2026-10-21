@@ -19,6 +19,7 @@ typedef struct thread
 	cpu_registers_t* context;
 	void* kernel_stack_base;
 	uint64_t page_directory;
+	struct fd_table* fds;
 	uint64_t id;
 	thread_state_t state;
 	uint64_t sleep_until_ticks;

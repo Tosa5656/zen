@@ -6,6 +6,7 @@
 #include "msr.h"
 #include "timer.h"
 #include "spinlock.h"
+#include "fd.h"
 
 thread_t* current_thread = NULL;
 thread_t* idle_thread = NULL;
@@ -140,6 +141,7 @@ thread_t* scheduler_create_user_thread(void* entry_point, uint64_t pml4_physical
 	ctx->r12 = ctx->r13 = ctx->r14 = ctx->r15 = 0;
 
 	thread->context = ctx;
+	thread->fds = fd_table_create_default();
 
 	scheduler_enqueue(thread);
 	return thread;
@@ -165,6 +167,12 @@ void scheduler_reclaim_dead_threads(void)
 	thread_t* thread = dead_queue_head;
 	dead_queue_head = dead_queue_head->next;
 	spin_unlock(&scheduler_lock);
+
+	if (thread->fds != NULL)
+	{
+		fd_table_destroy(thread->fds);
+		thread->fds = NULL;
+	}
 
 	uint64_t kstack_physical = VIRTUAL_TO_PHYSICAL(thread->kernel_stack_base);
 	physical_memory_manager_free_page(kstack_physical);
@@ -280,5 +288,8 @@ void scheduler_init(void)
 	ctx->r12 = ctx->r13 = ctx->r14 = ctx->r15 = 0;
 
 	idle_thread->context = ctx;
+
+	boot_thread->fds = fd_table_create_default();
+
 	serial_write("Scheduler initialized!\r\n");
 }

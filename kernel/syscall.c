@@ -10,6 +10,7 @@
 #include "scheduler.h"
 #include "time.h"
 #include "timer.h"
+#include "fd.h"
 
 #define TIMER_HZ SYSTEM_TICK_HZ
 #define MS_PER_TICK (1000 / TIMER_HZ)
@@ -79,18 +80,10 @@ static uint64_t sys_write(cpu_registers_t *registers)
 	uint64_t buf = registers->rsi;
 	uint64_t count = registers->rdx;
 
-	if (fd != 1 && fd != 2)
-		return (uint64_t)-1;
-
 	if (!user_range_ok(buf, count, 0))
 		return (uint64_t)-1;
 
-	const char *text = (const char *)buf;
-
-	for (uint64_t i = 0; i < count; i++)
-		serial_putc(text[i]);
-
-	return count;
+	return fd_write((int)fd, (const void*)buf, count);
 }
 
 static uint64_t sys_read(cpu_registers_t *registers)
@@ -99,27 +92,19 @@ static uint64_t sys_read(cpu_registers_t *registers)
 	uint8_t *buf = (uint8_t *)registers->rsi;
 	uint64_t count = registers->rdx;
 
-	if (fd != 0)
-		return (uint64_t)-1;
-
 	if (!user_range_ok((uint64_t)buf, count, 1))
 		return (uint64_t)-1;
 
-	uint64_t got = 0;
+	uint64_t got = fd_read((int)fd, buf, count);
 
-	while (got < count && keyboard_pop(&buf[got]))
-	{
-		got++;
-	}
-
-	if (got > 0 || count == 0)
+	if (got != 0 || count == 0)
 	{
 		return got;
 	}
 
 	__asm__ volatile("cli");
 
-	if (keyboard_pop(&buf[got]))
+	if (keyboard_pop(&buf[0]))
 	{
 		__asm__ volatile("sti");
 		return 1;
@@ -133,6 +118,74 @@ static uint64_t sys_read(cpu_registers_t *registers)
 	uint64_t new_rsp = schedule_callback((uint64_t)registers);
 	yield_iretq(new_rsp);
 	__builtin_unreachable();
+}
+
+static uint64_t sys_open(cpu_registers_t *registers)
+{
+	uint64_t path_user = registers->rdi;
+	uint64_t flags = registers->rsi;
+
+	uint64_t length = 0;
+	while (length < 255)
+	{
+		if (!user_range_ok(path_user, length + 1, 0))
+		{
+			return (uint64_t)-1;
+		}
+
+		char byte = ((const char*)path_user)[length];
+		if (byte == '\0')
+		{
+			break;
+		}
+
+		length++;
+	}
+
+	if (length == 0)
+	{
+		return (uint64_t)-1;
+	}
+
+	if (!user_range_ok(path_user, length + 1, 0))
+	{
+		return (uint64_t)-1;
+	}
+
+	char path[256];
+	for (uint64_t i = 0; i < length; i++)
+	{
+		path[i] = ((const char*)path_user)[i];
+	}
+	path[length] = '\0';
+
+	uint32_t access = (uint32_t)flags & (VFS_RDWR | VFS_CREATE);
+
+	return (uint64_t)fd_open(path, access);
+}
+
+static uint64_t sys_close(cpu_registers_t *registers)
+{
+	uint64_t fd = registers->rdi;
+
+	if (fd <= FD_STDERR || fd >= FD_MAX)
+	{
+		return (uint64_t)-1;
+	}
+
+	return (fd_close((int)fd) == 0) ? 0 : (uint64_t)-1;
+}
+
+static uint64_t sys_dup(cpu_registers_t *registers)
+{
+	uint64_t fd = registers->rdi;
+
+	if (fd >= FD_MAX)
+	{
+		return (uint64_t)-1;
+	}
+
+	return (uint64_t)fd_dup((int)fd);
 }
 
 static uint64_t sys_nanosleep(cpu_registers_t *registers)
@@ -203,10 +256,13 @@ static uint64_t sys_exit(cpu_registers_t *registers)
 
 static const syscall_fn_t syscall_table[SYSCALL_MAX + 1] =
 {
-	[SYSCALL_READ]     = sys_read,
-	[SYSCALL_WRITE]    = sys_write,
+	[SYSCALL_READ]      = sys_read,
+	[SYSCALL_WRITE]     = sys_write,
+	[SYSCALL_OPEN]      = sys_open,
+	[SYSCALL_CLOSE]     = sys_close,
+	[SYSCALL_DUP]       = sys_dup,
 	[SYSCALL_NAONSLEEP] = sys_nanosleep,
-	[SYSCALL_EXIT]     = sys_exit,
+	[SYSCALL_EXIT]      = sys_exit,
 };
 
 void syscall_init(void)
