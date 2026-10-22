@@ -93,7 +93,7 @@ void kmain(boot_info_t *boot_info)
 
 	fat32_init();
 	fat32_mount_all();
-	fat32_list_first();
+	fat32_list_all();
 
 	usermode_test();
 

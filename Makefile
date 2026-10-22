@@ -9,6 +9,14 @@ MCOPY=mcopy
 IMAGE=zen.img
 DISK_SIZE=200 # Size in megabytes
 
+ESP_START=2048
+ESP_SECTORS=192512
+ZEN_START=194560
+ZEN_SECTORS=215007
+
+ESP_OFFSET=$(shell echo $$(( $(ESP_START) * 512 )))
+ZEN_OFFSET=$(shell echo $$(( $(ZEN_START) * 512 )))
+
 all: bootloader kernel
 
 clean:
@@ -33,17 +41,16 @@ image: bootloader kernel
 	$(PARTED) -s $(IMAGE) mklabel gpt
 
 	$(PARTED) -s $(IMAGE) mkpart ESP fat32 2048s 100MB
-	$(PARTED) -s $(IMAGE) mkpart ZEN 100MB 100%
+	$(PARTED) -s $(IMAGE) mkpart ZEN fat32 100MB 100%
 	$(PARTED) -s $(IMAGE) set 1 boot on
 
 	dd if=arch/$(ARCH)/bootloader/bootloader_stage1.bin of=$(IMAGE) bs=1 count=446 conv=notrunc
 	dd if=arch/$(ARCH)/bootloader/bootloader_stage2.bin of=$(IMAGE) bs=512 seek=64 conv=notrunc
+	
+	$(MFORMAT) -F -i $(IMAGE)@@$(ESP_OFFSET) -T $(ESP_SECTORS) ::
+	$(MCOPY) -i $(IMAGE)@@$(ESP_OFFSET) kernel/kernel.bin ::/KERNEL.BIN
 
-	$(MFORMAT) -F -i $(IMAGE)@@1048576 ::
-	#$(MCOPY) -D r -i $(IMAGE)@@1048576 -s /dev/null ::/EFI
-	#$(MCOPY) -D r -i $(IMAGE)@@1048576 -s /dev/null ::/EFI/BOOT
-
-	#$(MCOPY) -i $(IMAGE)@@1048576 arch/$(ARCH)/bootloader/uefi/bootx64.efi ::/EFI/BOOT/BOOTX64.EFI
-	$(MCOPY) -i $(IMAGE)@@1048576 kernel/kernel.bin ::/KERNEL.BIN
+	$(MFORMAT) -F -i $(IMAGE)@@$(ZEN_OFFSET) -T $(ZEN_SECTORS) ::
+	$(MCOPY) -s -i $(IMAGE)@@$(ZEN_OFFSET) system/* ::/
 
 .PHONY: all clean bootloader kernel image iso
