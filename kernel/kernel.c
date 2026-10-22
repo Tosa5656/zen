@@ -16,6 +16,7 @@
 #include "ata.h"
 #include "vfs.h"
 #include "fd.h"
+#include "fs/fat32.h"
 
 extern uint8_t _kernel_start[];
 extern uint8_t _kernel_end[];
@@ -89,6 +90,10 @@ void kmain(boot_info_t *boot_info)
 	syscall_init();
 
 	ata_init();
+
+	fat32_init();
+	fat32_mount_all();
+	fat32_list_first();
 
 	usermode_test();
 
