@@ -23,12 +23,16 @@ typedef struct thread
 	uint64_t id;
 	thread_state_t state;
 	uint64_t sleep_until_ticks;
+	uint64_t blocked_rip;
+	uint64_t blocked_rax;
 	struct thread* next;
+	struct thread* wait_next;
 } thread_t;
 
 void scheduler_init(void);
 void scheduler_enqueue(thread_t* thread);
 thread_t* scheduler_dequeue(void);
+void scheduler_wake(thread_t* thread);
 thread_t* scheduler_create_user_thread(void* entry_point, uint64_t pml4_physical, uint64_t user_rsp);
 uint64_t schedule_callback(uint64_t old_rsp);
 bool scheduler_should_switch(void);

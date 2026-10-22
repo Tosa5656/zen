@@ -12,6 +12,8 @@
 
 #define FD_WOULD_BLOCK ((uint64_t)-2)
 
+struct thread;
+
 typedef struct vfs_fd
 {
 	vfs_node_t* node;
@@ -29,11 +31,14 @@ typedef struct fd_table
 fd_table_t* fd_table_create_default(void);
 void fd_table_destroy(fd_table_t* table);
 fd_table_t* fd_table_current(void);
-vfs_fd_t* fd_get(int fd);
 int fd_open(const char* path, uint32_t flags);
 uint64_t fd_read(int fd, void* buffer, uint64_t count);
 uint64_t fd_write(int fd, const void* buffer, uint64_t count);
 int fd_close(int fd);
 int fd_dup(int fd);
+int fd_seek(int fd, int64_t offset, int whence);
+void fd_wait_add(struct thread* thread);
+void fd_wait_remove(struct thread* thread);
+void fd_wait_wake_all(void);
 
 #endif

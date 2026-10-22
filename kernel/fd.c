@@ -2,6 +2,20 @@
 #include "heap.h"
 #include "scheduler.h"
 #include "serial.h"
+#include "spinlock.h"
+
+static spinlock_t fd_current_lock = {0};
+static fd_table_t* kernel_table = NULL;
+static thread_t* fd_wait_head = NULL;
+
+static void handle_free(vfs_fd_t* handle)
+{
+	if (handle->node != NULL)
+	{
+		vfs_node_put(handle->node);
+	}
+	kfree(handle);
+}
 
 fd_table_t* fd_table_create_default(void)
 {
@@ -24,14 +38,14 @@ fd_table_t* fd_table_create_default(void)
 
 	for (int fd = 0; fd < 3; fd++)
 	{
-		vfs_node_t* node = vfs_open(std[fd].path, VFS_RDONLY);
+		vfs_node_t* node = vfs_open(std[fd].path, std[fd].flags);
 		vfs_fd_t* handle = kcalloc(1, sizeof(vfs_fd_t));
 
 		if (node == NULL || handle == NULL)
 		{
 			if (node != NULL)
 			{
-				node->refs--;
+				vfs_node_put(node);
 			}
 			kfree(handle);
 			fd_table_destroy(table);
@@ -56,6 +70,9 @@ void fd_table_destroy(fd_table_t* table)
 		return;
 	}
 
+	vfs_fd_t* doomed[FD_MAX];
+	uint32_t doomed_count = 0;
+
 	spin_lock(&table->lock);
 
 	for (int fd = 0; fd < FD_MAX; fd++)
@@ -70,15 +87,17 @@ void fd_table_destroy(fd_table_t* table)
 
 		if (--handle->refs == 0)
 		{
-			if (handle->node != NULL)
-			{
-				handle->node->refs--;
-			}
-			kfree(handle);
+			doomed[doomed_count++] = handle;
 		}
 	}
 
 	spin_unlock(&table->lock);
+
+	for (uint32_t i = 0; i < doomed_count; i++)
+	{
+		handle_free(doomed[i]);
+	}
+
 	kfree(table);
 }
 
@@ -91,26 +110,36 @@ fd_table_t* fd_table_current(void)
 		return (fd_table_t*)thread->fds;
 	}
 
-	if (thread != NULL)
+	spin_lock(&fd_current_lock);
+
+	if (thread != NULL && thread->fds == NULL)
 	{
 		thread->fds = fd_table_create_default();
-		if ((fd_table_t*)thread->fds != NULL)
-		{
-			return (fd_table_t*)thread->fds;
-		}
 	}
 
-	static fd_table_t* kernel_table = NULL;
-	if (kernel_table == NULL)
+	fd_table_t* table = (thread != NULL) ? (fd_table_t*)thread->fds : NULL;
+
+	if (table == NULL)
 	{
-		kernel_table = fd_table_create_default();
+		if (kernel_table == NULL)
+		{
+			kernel_table = fd_table_create_default();
+		}
+		table = kernel_table;
 	}
 
-	return kernel_table;
+	spin_unlock(&fd_current_lock);
+
+	return table;
 }
 
-vfs_fd_t* fd_get(int fd)
+static vfs_fd_t* fd_pin(int fd, fd_table_t** out_table)
 {
+	if (out_table != NULL)
+	{
+		*out_table = NULL;
+	}
+
 	if (fd < 0 || fd >= FD_MAX)
 	{
 		return NULL;
@@ -122,7 +151,41 @@ vfs_fd_t* fd_get(int fd)
 		return NULL;
 	}
 
-	return table->descriptors[fd];
+	spin_lock(&table->lock);
+
+	vfs_fd_t* handle = table->descriptors[fd];
+	if (handle != NULL)
+	{
+		handle->refs++;
+	}
+
+	spin_unlock(&table->lock);
+
+	if (out_table != NULL)
+	{
+		*out_table = table;
+	}
+
+	return handle;
+}
+
+static void fd_unpin(fd_table_t* table, vfs_fd_t* handle)
+{
+	if (handle == NULL)
+	{
+		return;
+	}
+
+	spin_lock(&table->lock);
+
+	int last = (--handle->refs == 0);
+
+	spin_unlock(&table->lock);
+
+	if (last)
+	{
+		handle_free(handle);
+	}
 }
 
 static int fd_store(int fd, vfs_node_t* node, uint32_t flags)
@@ -144,10 +207,15 @@ static int fd_store(int fd, vfs_node_t* node, uint32_t flags)
 		return -1;
 	}
 
+	handle->node = node;
+	handle->flags = flags;
+	handle->offset = 0;
+	handle->refs = 1;
+
 	spin_lock(&table->lock);
 
 	int slot = -1;
-	for (int i = (fd >= 0 && fd < FD_MAX) ? fd : 0; i < FD_MAX; i++)
+	for (int i = fd; i < FD_MAX; i++)
 	{
 		if (table->descriptors[i] == NULL && (i > FD_STDERR || fd == i))
 		{
@@ -159,15 +227,9 @@ static int fd_store(int fd, vfs_node_t* node, uint32_t flags)
 	if (slot == -1)
 	{
 		spin_unlock(&table->lock);
-		kfree(handle);
+		handle_free(handle);
 		return -1;
 	}
-
-	handle->node = node;
-	handle->flags = flags;
-	handle->offset = 0;
-	handle->refs = 1;
-	node->refs++;
 
 	table->descriptors[slot] = handle;
 
@@ -178,7 +240,7 @@ static int fd_store(int fd, vfs_node_t* node, uint32_t flags)
 
 int fd_open(const char* path, uint32_t flags)
 {
-	if ((flags & VFS_RDWR) == 0 && path != NULL)
+	if ((flags & VFS_RDWR) == 0)
 	{
 		flags |= VFS_RDONLY;
 	}
@@ -191,7 +253,7 @@ int fd_open(const char* path, uint32_t flags)
 
 	if (node->type == VFS_DIRECTORY)
 	{
-		node->refs--;
+		vfs_node_put(node);
 		return -1;
 	}
 
@@ -200,9 +262,18 @@ int fd_open(const char* path, uint32_t flags)
 
 uint64_t fd_read(int fd, void* buffer, uint64_t count)
 {
-	vfs_fd_t* handle = fd_get(fd);
+	fd_table_t* table = NULL;
+	vfs_fd_t* handle = fd_pin(fd, &table);
+
 	if (handle == NULL || handle->node == NULL || buffer == NULL)
 	{
+		fd_unpin(table, handle);
+		return (uint64_t)-1;
+	}
+
+	if ((handle->flags & VFS_RDONLY) == 0)
+	{
+		fd_unpin(table, handle);
 		return (uint64_t)-1;
 	}
 
@@ -211,15 +282,24 @@ uint64_t fd_read(int fd, void* buffer, uint64_t count)
 		count = 0x7FFFFFFF;
 	}
 
+	vfs_type_t type = handle->node->type;
 	int moved = vfs_node_read(handle->node, handle->offset, (uint32_t)count, buffer);
+
+	if (moved > 0 && (type == VFS_FILE || type == VFS_BLOCKDEVICE))
+	{
+		handle->offset += (uint64_t)moved;
+	}
+
+	fd_unpin(table, handle);
+
 	if (moved < 0)
 	{
 		return (uint64_t)-1;
 	}
 
-	if (handle->node->type == VFS_FILE || handle->node->type == VFS_BLOCKDEVICE)
+	if (moved == 0 && count > 0 && type == VFS_CHARDEVICE)
 	{
-		handle->offset += moved;
+		return FD_WOULD_BLOCK;
 	}
 
 	return (uint64_t)moved;
@@ -227,14 +307,18 @@ uint64_t fd_read(int fd, void* buffer, uint64_t count)
 
 uint64_t fd_write(int fd, const void* buffer, uint64_t count)
 {
-	vfs_fd_t* handle = fd_get(fd);
+	fd_table_t* table = NULL;
+	vfs_fd_t* handle = fd_pin(fd, &table);
+
 	if (handle == NULL || handle->node == NULL || buffer == NULL)
 	{
+		fd_unpin(table, handle);
 		return (uint64_t)-1;
 	}
 
-	if ((handle->flags & (VFS_WRONLY | VFS_RDWR)) == 0)
+	if ((handle->flags & VFS_WRONLY) == 0)
 	{
+		fd_unpin(table, handle);
 		return (uint64_t)-1;
 	}
 
@@ -244,14 +328,15 @@ uint64_t fd_write(int fd, const void* buffer, uint64_t count)
 	}
 
 	int moved = vfs_node_write(handle->node, handle->offset, (uint32_t)count, buffer);
-	if (moved < 0)
+
+	if (moved > 0)
 	{
-		return (uint64_t)-1;
+		handle->offset += (uint64_t)moved;
 	}
 
-	handle->offset += moved;
+	fd_unpin(table, handle);
 
-	return (uint64_t)moved;
+	return (moved < 0) ? (uint64_t)-1 : (uint64_t)moved;
 }
 
 int fd_close(int fd)
@@ -278,27 +363,21 @@ int fd_close(int fd)
 
 	table->descriptors[fd] = NULL;
 
-	if (--handle->refs > 0)
-	{
-		spin_unlock(&table->lock);
-		return 0;
-	}
-
-	if (handle->node != NULL)
-	{
-		handle->node->refs--;
-	}
+	int last = (--handle->refs == 0);
 
 	spin_unlock(&table->lock);
-	kfree(handle);
+
+	if (last)
+	{
+		handle_free(handle);
+	}
 
 	return 0;
 }
 
 int fd_dup(int fd)
 {
-	vfs_fd_t* handle = fd_get(fd);
-	if (handle == NULL)
+	if (fd < 0 || fd >= FD_MAX)
 	{
 		return -1;
 	}
@@ -311,6 +390,13 @@ int fd_dup(int fd)
 
 	spin_lock(&table->lock);
 
+	vfs_fd_t* handle = table->descriptors[fd];
+	if (handle == NULL)
+	{
+		spin_unlock(&table->lock);
+		return -1;
+	}
+
 	int slot = -1;
 	for (int i = FD_STDERR + 1; i < FD_MAX; i++)
 	{
@@ -321,16 +407,125 @@ int fd_dup(int fd)
 		}
 	}
 
-	if (slot == -1)
+	if (slot != -1)
 	{
-		spin_unlock(&table->lock);
-		return -1;
+		handle->refs++;
+		table->descriptors[slot] = handle;
 	}
-
-	handle->refs++;
-	table->descriptors[slot] = handle;
 
 	spin_unlock(&table->lock);
 
 	return slot;
+}
+
+int fd_seek(int fd, int64_t offset, int whence)
+{
+	fd_table_t* table = NULL;
+	vfs_fd_t* handle = fd_pin(fd, &table);
+
+	if (handle == NULL || handle->node == NULL)
+	{
+		fd_unpin(table, handle);
+		return -1;
+	}
+
+	int result = -1;
+
+	if (handle->node->type == VFS_FILE || handle->node->type == VFS_BLOCKDEVICE)
+	{
+		int64_t base = 0;
+
+		if (whence == VFS_SEEK_CUR)
+		{
+			base = (int64_t)handle->offset;
+		}
+		else if (whence == VFS_SEEK_END)
+		{
+			base = (int64_t)handle->node->size;
+		}
+		else if (whence != VFS_SEEK_SET)
+		{
+			fd_unpin(table, handle);
+			return -1;
+		}
+
+		int64_t target = base + offset;
+
+		if (target >= 0 && (uint64_t)target <= handle->node->size)
+		{
+			handle->offset = (uint64_t)target;
+			result = 0;
+		}
+	}
+
+	fd_unpin(table, handle);
+
+	return result;
+}
+
+void fd_wait_add(thread_t* thread)
+{
+	if (thread == NULL)
+	{
+		return;
+	}
+
+	uint64_t flags = irq_save();
+
+	thread->wait_next = fd_wait_head;
+	fd_wait_head = thread;
+
+	irq_restore(flags);
+}
+
+void fd_wait_remove(thread_t* thread)
+{
+	if (thread == NULL)
+	{
+		return;
+	}
+
+	uint64_t flags = irq_save();
+
+	thread_t* previous = NULL;
+	thread_t* current = fd_wait_head;
+
+	while (current != NULL)
+	{
+		if (current == thread)
+		{
+			if (previous == NULL)
+			{
+				fd_wait_head = current->wait_next;
+			}
+			else
+			{
+				previous->wait_next = current->wait_next;
+			}
+			current->wait_next = NULL;
+			break;
+		}
+		previous = current;
+		current = current->wait_next;
+	}
+
+	irq_restore(flags);
+}
+
+void fd_wait_wake_all(void)
+{
+	uint64_t flags = irq_save();
+
+	thread_t* thread = fd_wait_head;
+	fd_wait_head = NULL;
+
+	while (thread != NULL)
+	{
+		thread_t* next = thread->wait_next;
+		thread->wait_next = NULL;
+		scheduler_wake(thread);
+		thread = next;
+	}
+
+	irq_restore(flags);
 }

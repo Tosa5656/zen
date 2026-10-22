@@ -55,10 +55,21 @@ static vfs_node_t* ramfs_node_build(ram_dire_t* entry)
 	node->refs = 0;
 	node->operations = &ramfs_operations;
 	node->private_data = entry;
+	node->canonical = node;
 
 	entry->node = node;
 
 	return node;
+}
+
+static vfs_node_t* ramfs_node_ensure(ram_dire_t* entry)
+{
+	if (entry->node == NULL)
+	{
+		return ramfs_node_build(entry);
+	}
+
+	return entry->node;
 }
 
 static ram_dire_t* ramfs_child_lookup(ram_dire_t* dir, const char* name)
@@ -86,11 +97,6 @@ static ram_dire_t* ramfs_entry_from(vfs_node_t* node)
 	return entry;
 }
 
-static void ramfs_sync_size(vfs_node_t* node, ram_dire_t* entry)
-{
-	entry->size = node->size;
-}
-
 static vfs_node_t* ramfs_finddir(vfs_node_t* node, const char* name)
 {
 	ram_dire_t* dir = ramfs_entry_from(node);
@@ -102,20 +108,11 @@ static vfs_node_t* ramfs_finddir(vfs_node_t* node, const char* name)
 	spin_lock(&ramfs_lock);
 
 	ram_dire_t* child = ramfs_child_lookup(dir, name);
+	vfs_node_t* result = (child != NULL) ? ramfs_node_ensure(child) : NULL;
 
 	spin_unlock(&ramfs_lock);
 
-	if (child == NULL)
-	{
-		return NULL;
-	}
-
-	if (child->node == NULL)
-	{
-		child->node = ramfs_node_build(child);
-	}
-
-	return child->node;
+	return result;
 }
 
 static int ramfs_readdir(vfs_node_t* node, uint32_t index, vfs_node_t* out_node)
@@ -134,12 +131,15 @@ static int ramfs_readdir(vfs_node_t* node, uint32_t index, vfs_node_t* out_node)
 		child = child->next;
 	}
 
-	if (child != NULL && child->node == NULL)
+	if (child == NULL)
 	{
-		child->node = ramfs_node_build(child);
+		spin_unlock(&ramfs_lock);
+		return -1;
 	}
 
-	if (child == NULL)
+	vfs_node_t* child_node = ramfs_node_ensure(child);
+
+	if (child_node == NULL)
 	{
 		spin_unlock(&ramfs_lock);
 		return -1;
@@ -154,9 +154,10 @@ static int ramfs_readdir(vfs_node_t* node, uint32_t index, vfs_node_t* out_node)
 	out_node->name[len] = '\0';
 	out_node->type = child->type;
 	out_node->size = child->size;
-	out_node->inode_num = (child->node != NULL) ? child->node->inode_num : 0;
-	out_node->operations = node->operations;
+	out_node->inode_num = child_node->inode_num;
+	out_node->operations = &ramfs_operations;
 	out_node->private_data = child;
+	out_node->canonical = child_node;
 	out_node->refs = 0;
 
 	spin_unlock(&ramfs_lock);
@@ -185,10 +186,8 @@ static ram_dire_t* ramfs_entry_new(const char* name, vfs_type_t type)
 	return entry;
 }
 
-static int ramfs_create(vfs_node_t* node, const char* name, uint16_t mask)
+static int ramfs_add(vfs_node_t* node, const char* name, vfs_type_t type)
 {
-	(void)mask;
-
 	ram_dire_t* dir = ramfs_entry_from(node);
 	if (dir == NULL || dir->type != VFS_DIRECTORY)
 	{
@@ -203,7 +202,7 @@ static int ramfs_create(vfs_node_t* node, const char* name, uint16_t mask)
 		return -1;
 	}
 
-	ram_dire_t* child = ramfs_entry_new(name, VFS_FILE);
+	ram_dire_t* child = ramfs_entry_new(name, type);
 	if (child == NULL)
 	{
 		spin_unlock(&ramfs_lock);
@@ -218,7 +217,44 @@ static int ramfs_create(vfs_node_t* node, const char* name, uint16_t mask)
 	return 0;
 }
 
+static int ramfs_create(vfs_node_t* node, const char* name, uint16_t mask)
+{
+	(void)mask;
+
+	return ramfs_add(node, name, VFS_FILE);
+}
+
 static int ramfs_mkdir(vfs_node_t* node, const char* name, uint16_t mask)
+{
+	(void)mask;
+
+	return ramfs_add(node, name, VFS_DIRECTORY);
+}
+
+static void ramfs_release(vfs_node_t* node)
+{
+	ram_dire_t* entry = (ram_dire_t*)node->private_data;
+
+	if (!node->orphaned)
+	{
+		return;
+	}
+
+	spin_lock(&ramfs_lock);
+
+	if (entry != NULL)
+	{
+		kfree(entry->data);
+		entry->data = NULL;
+		kfree(entry);
+	}
+
+	kfree(node);
+
+	spin_unlock(&ramfs_lock);
+}
+
+static int ramfs_unlink(vfs_node_t* node, const char* name)
 {
 	ram_dire_t* dir = ramfs_entry_from(node);
 	if (dir == NULL || dir->type != VFS_DIRECTORY)
@@ -226,25 +262,53 @@ static int ramfs_mkdir(vfs_node_t* node, const char* name, uint16_t mask)
 		return -1;
 	}
 
-	(void)mask;
-
 	spin_lock(&ramfs_lock);
 
-	if (ramfs_child_lookup(dir, name) != NULL)
+	ram_dire_t* previous = NULL;
+	ram_dire_t* child = dir->children;
+
+	while (child != NULL && !ramfs_streq(child->name, name))
 	{
-		spin_unlock(&ramfs_lock);
-		return -1;
+		previous = child;
+		child = child->next;
 	}
 
-	ram_dire_t* child = ramfs_entry_new(name, VFS_DIRECTORY);
 	if (child == NULL)
 	{
 		spin_unlock(&ramfs_lock);
 		return -1;
 	}
 
-	child->next = dir->children;
-	dir->children = child;
+	if (child->type == VFS_DIRECTORY && child->children != NULL)
+	{
+		spin_unlock(&ramfs_lock);
+		return -1;
+	}
+
+	if (previous == NULL)
+	{
+		dir->children = child->next;
+	}
+	else
+	{
+		previous->next = child->next;
+	}
+	child->next = NULL;
+
+	if (child->node != NULL && child->node->refs > 0)
+	{
+		child->node->orphaned = 1;
+	}
+	else
+	{
+		if (child->node != NULL)
+		{
+			kfree(child->node);
+			child->node = NULL;
+		}
+		kfree(child->data);
+		kfree(child);
+	}
 
 	spin_unlock(&ramfs_lock);
 
@@ -254,23 +318,32 @@ static int ramfs_mkdir(vfs_node_t* node, const char* name, uint16_t mask)
 static int ramfs_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer)
 {
 	ram_dire_t* entry = ramfs_entry_from(node);
-	if (entry == NULL || entry->type != VFS_FILE || entry->data == NULL)
+	if (entry == NULL || entry->type != VFS_FILE)
 	{
-		return (entry != NULL && entry->type == VFS_FILE && size == 0) ? 0 : -1;
+		return -1;
 	}
 
-	if (offset >= entry->size)
+	if (size == 0)
 	{
 		return 0;
 	}
 
-	uint64_t available = entry->size - offset;
-	uint32_t moved = (size < available) ? size : (uint32_t)available;
+	spin_lock(&ramfs_lock);
 
-	for (uint32_t i = 0; i < moved; i++)
+	uint32_t moved = 0;
+
+	if (offset < entry->size && entry->data != NULL)
 	{
-		((uint8_t*)buffer)[i] = entry->data[offset + i];
+		uint64_t available = entry->size - offset;
+		moved = (size < available) ? size : (uint32_t)available;
+
+		for (uint32_t i = 0; i < moved; i++)
+		{
+			((uint8_t*)buffer)[i] = entry->data[offset + i];
+		}
 	}
+
+	spin_unlock(&ramfs_lock);
 
 	return (int)moved;
 }
@@ -281,6 +354,11 @@ static int ramfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, const v
 	if (entry == NULL || entry->type != VFS_FILE)
 	{
 		return -1;
+	}
+
+	if (size == 0)
+	{
+		return 0;
 	}
 
 	spin_lock(&ramfs_lock);
@@ -315,7 +393,6 @@ static int ramfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, const v
 		entry->size = needed;
 	}
 	node->size = entry->size;
-	ramfs_sync_size(node, entry);
 
 	spin_unlock(&ramfs_lock);
 
@@ -329,7 +406,9 @@ vfs_operations_t ramfs_operations =
 	ramfs_finddir,
 	ramfs_readdir,
 	ramfs_create,
-	ramfs_mkdir
+	ramfs_mkdir,
+	ramfs_unlink,
+	ramfs_release
 };
 
 vfs_node_t* ramfs_make_root(void)

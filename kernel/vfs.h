@@ -14,6 +14,10 @@
 #define VFS_RDWR   0x3
 #define VFS_CREATE 0x4
 
+#define VFS_SEEK_SET 0
+#define VFS_SEEK_CUR 1
+#define VFS_SEEK_END 2
+
 typedef enum
 {
 	VFS_FILE = 1,
@@ -33,6 +37,8 @@ typedef struct vfs_operations
 	int (*readdir)(struct vfs_node* node, uint32_t index, struct vfs_node* out_node);
 	int (*create)(struct vfs_node* parent, const char* name, uint16_t mask);
 	int (*mkdir)(struct vfs_node* parent, const char* name, uint16_t mask);
+	int (*unlink)(struct vfs_node* parent, const char* name);
+	void (*release)(struct vfs_node* node);
 } vfs_operations_t;
 
 typedef struct vfs_node
@@ -44,6 +50,8 @@ typedef struct vfs_node
 	uint32_t refs;
 	vfs_operations_t* operations;
 	void* private_data;
+	struct vfs_node* canonical;
+	int orphaned;
 } vfs_node_t;
 
 typedef struct fs_driver
@@ -64,6 +72,8 @@ int vfs_mount(const char* name, block_device_t* dev);
 void vfs_node_get(vfs_node_t* node);
 void vfs_node_put(vfs_node_t* node);
 vfs_node_t* vfs_open(const char* path, uint32_t flags);
+int vfs_mkdir(const char* path);
+int vfs_unlink(const char* path);
 int vfs_node_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer);
 int vfs_node_write(vfs_node_t* node, uint64_t offset, uint32_t size, const void* buffer);
 

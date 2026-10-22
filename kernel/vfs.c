@@ -12,6 +12,37 @@ static uint32_t mount_count = 0;
 static vfs_node_t vfs_root;
 static spinlock_t vfs_lock = {0};
 
+// TODO: Remove when libc will done
+static int vfs_streq(const char* a, const char* b)
+{
+	while (*a != '\0' && *a == *b)
+	{
+		a++;
+		b++;
+	}
+
+	return (*a == '\0' && *b == '\0');
+}
+
+static uint32_t vfs_strcpy(char* dst, uint32_t dst_size, const char* src)
+{
+	uint32_t len = 0;
+
+	while (src[len] != '\0' && len + 1 < dst_size)
+	{
+		dst[len] = src[len];
+		len++;
+	}
+	dst[len] = '\0';
+
+	return len;
+}
+
+static vfs_node_t* node_canonical(vfs_node_t* node)
+{
+	return (node->canonical != NULL) ? node->canonical : node;
+}
+
 void fs_register(fs_driver_t* driver)
 {
 	if (driver == NULL || driver->mount == NULL || driver_count >= VFS_MAX_DRIVERS)
@@ -26,35 +57,36 @@ void vfs_node_get(vfs_node_t* node)
 {
 	if (node != NULL)
 	{
-		node->refs++;
+		node_canonical(node)->refs++;
 	}
 }
 
 void vfs_node_put(vfs_node_t* node)
 {
-	if (node == NULL || node->refs == 0)
+	if (node == NULL)
 	{
 		return;
 	}
 
-	node->refs--;
+	node = node_canonical(node);
+
+	if (node->refs == 0)
+	{
+		return;
+	}
+
+	if (--node->refs == 0 && node->operations != NULL && node->operations->release != NULL)
+	{
+		node->operations->release(node);
+	}
 }
 
 static vfs_node_t* mount_find(const char* name)
 {
 	for (uint32_t i = 0; i < mount_count; i++)
 	{
-		const char* m = mounts[i].name;
-
-		uint32_t j = 0;
-		while (m[j] != '\0' && name[j] == m[j])
+		if (vfs_streq(mounts[i].name, name))
 		{
-			j++;
-		}
-
-		if (name[j] == '\0' && m[j] == '\0')
-		{
-			vfs_node_get(mounts[i].node);
 			return mounts[i].node;
 		}
 	}
@@ -64,20 +96,19 @@ static vfs_node_t* mount_find(const char* name)
 
 static uint32_t mount_add(const char* name, vfs_node_t* node)
 {
-	if (name == NULL || node == NULL || mount_count >= VFS_MAX_MOUNTS)
+	if (name == NULL || node == NULL || mount_count >= VFS_MAX_MOUNTS || mount_find(name) != NULL)
 	{
 		return 0xFFFFFFFF;
 	}
 
 	vfs_mount_t* slot = &mounts[mount_count];
-	uint32_t len = 0;
+	vfs_strcpy(slot->name, sizeof(slot->name), name);
 
-	while (len + 1 < sizeof(slot->name) && name[len] != '\0')
+	uint32_t len = 0;
+	while (slot->name[len] != '\0')
 	{
-		slot->name[len] = name[len];
 		len++;
 	}
-	slot->name[len] = '\0';
 
 	if (len > 1 && slot->name[0] == '/')
 	{
@@ -88,6 +119,7 @@ static uint32_t mount_add(const char* name, vfs_node_t* node)
 	}
 
 	slot->node = node;
+	node->canonical = node;
 
 	return mount_count++;
 }
@@ -99,18 +131,28 @@ int vfs_mount(const char* name, block_device_t* dev)
 		return -1;
 	}
 
+	spin_lock(&vfs_lock);
+
+	if (mount_find(name) != NULL)
+	{
+		spin_unlock(&vfs_lock);
+		return -1;
+	}
+
 	for (uint32_t i = 0; i < driver_count; i++)
 	{
 		vfs_node_t* node = drivers[i]->mount(dev);
-
-		if (mount_add(name, node) == 0xFFFFFFFF)
+		if (node == NULL)
 		{
-			return -1;
+			continue;
 		}
 
-		return 0;
+		int result = (mount_add(name, node) == 0xFFFFFFFF) ? -1 : 0;
+		spin_unlock(&vfs_lock);
+		return result;
 	}
 
+	spin_unlock(&vfs_lock);
 	return -1;
 }
 
@@ -124,8 +166,6 @@ static vfs_node_t* vfs_walk(vfs_node_t* start, const char* path, vfs_node_t** ou
 	{
 		i++;
 	}
-
-	int missing = 0;
 
 	while (path[i] != '\0')
 	{
@@ -181,23 +221,12 @@ static vfs_node_t* vfs_walk(vfs_node_t* start, const char* path, vfs_node_t** ou
 				probe++;
 			}
 
-			missing = 1;
-
 			if (out_tail != NULL) *out_tail = tail_ok;
+			if (out_parent != NULL) *out_parent = tail_ok ? current : NULL;
 
-			if (out_parent != NULL)
-			{
-				*out_parent = tail_ok ? current : NULL;
-			}
 			if (out_name != NULL && tail_ok)
 			{
-				uint32_t c = 0;
-				while (component[c] != '\0')
-				{
-					out_name[c] = component[c];
-					c++;
-				}
-				out_name[c] = '\0';
+				vfs_strcpy(out_name, VFS_NAMELENGTH, component);
 			}
 
 			return NULL;
@@ -206,15 +235,37 @@ static vfs_node_t* vfs_walk(vfs_node_t* start, const char* path, vfs_node_t** ou
 		current = next;
 	}
 
-	if (missing == 0)
+	return current;
+}
+
+static vfs_node_t* vfs_create_tail(const char* path, int directory)
+{
+	vfs_node_t* parent = NULL;
+	char name[VFS_NAMELENGTH];
+	int tail_ok = 0;
+
+	vfs_walk(&vfs_root, path, &parent, name, &tail_ok);
+
+	if (!tail_ok || parent == NULL || name[0] == '\0' || parent->operations == NULL)
 	{
-		return current;
+		return NULL;
 	}
 
-	if (out_parent != NULL) *out_parent = NULL;
-	if (out_tail != NULL) *out_tail = 0;
+	if (directory)
+	{
+		if (parent->operations->mkdir == NULL ||
+			parent->operations->mkdir(parent, name, 0777) != 0)
+		{
+			return NULL;
+		}
+	}
+	else if (parent->operations->create == NULL ||
+			 parent->operations->create(parent, name, 0777) != 0)
+	{
+		return NULL;
+	}
 
-	return NULL;
+	return parent->operations->finddir(parent, name);
 }
 
 vfs_node_t* vfs_open(const char* path, uint32_t flags)
@@ -230,28 +281,61 @@ vfs_node_t* vfs_open(const char* path, uint32_t flags)
 
 	if (node == NULL && (flags & VFS_CREATE))
 	{
-		vfs_node_t* parent = NULL;
-		char name[VFS_NAMELENGTH];
-		int tail_ok = 0;
-
-		vfs_walk(&vfs_root, path, &parent, name, &tail_ok);
-
-		if (tail_ok && parent != NULL && name[0] != '\0' &&
-			parent->operations != NULL && parent->operations->create != NULL &&
-			parent->operations->create(parent, name, 0777) == 0)
-		{
-			node = parent->operations->finddir(parent, name);
-		}
+		node = vfs_create_tail(path, 0);
 	}
 
 	if (node != NULL)
 	{
-		node->refs++;
+		vfs_node_get(node);
 	}
 
 	spin_unlock(&vfs_lock);
 
 	return node;
+}
+
+int vfs_mkdir(const char* path)
+{
+	if (path == NULL || path[0] == '\0')
+	{
+		return -1;
+	}
+
+	spin_lock(&vfs_lock);
+
+	int result = (vfs_create_tail(path, 1) != NULL) ? 0 : -1;
+
+	spin_unlock(&vfs_lock);
+
+	return result;
+}
+
+int vfs_unlink(const char* path)
+{
+	if (path == NULL || path[0] == '\0')
+	{
+		return -1;
+	}
+
+	spin_lock(&vfs_lock);
+
+	vfs_node_t* parent = NULL;
+	char name[VFS_NAMELENGTH];
+	int tail_ok = 0;
+
+	vfs_walk(&vfs_root, path, &parent, name, &tail_ok);
+
+	int result = -1;
+
+	if (tail_ok && parent != NULL && name[0] != '\0' && parent->operations != NULL &&
+		parent->operations->unlink != NULL)
+	{
+		result = parent->operations->unlink(parent, name);
+	}
+
+	spin_unlock(&vfs_lock);
+
+	return result;
 }
 
 int vfs_node_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer)
@@ -302,21 +386,15 @@ static vfs_node_t* root_finddir(vfs_node_t* node, const char* name)
 static int root_fill_from_mount(uint32_t index, vfs_node_t* out_node)
 {
 	vfs_node_t* src = mounts[index].node;
-	const char* mname = mounts[index].name;
 
-	uint32_t len = 0;
-	while (mname[len] != '\0' && len + 1 < sizeof(out_node->name))
-	{
-		out_node->name[len] = mname[len];
-		len++;
-	}
-	out_node->name[len] = '\0';
+	vfs_strcpy(out_node->name, sizeof(out_node->name), mounts[index].name);
 
 	out_node->type = src->type;
 	out_node->size = src->size;
 	out_node->inode_num = src->inode_num;
 	out_node->operations = src->operations;
 	out_node->private_data = src->private_data;
+	out_node->canonical = node_canonical(src);
 	out_node->refs = 0;
 
 	return 0;
@@ -363,6 +441,18 @@ static int root_mkdir(vfs_node_t* node, const char* name, uint16_t mask)
 	return -1;
 }
 
+static int root_unlink(vfs_node_t* node, const char* name)
+{
+	(void)node;
+
+	if (ramfs_backing != NULL)
+	{
+		return ramfs_backing->operations->unlink(ramfs_backing, name);
+	}
+
+	return -1;
+}
+
 static vfs_operations_t root_operations =
 {
 	NULL,
@@ -370,7 +460,9 @@ static vfs_operations_t root_operations =
 	root_finddir,
 	root_readdir,
 	root_create,
-	root_mkdir
+	root_mkdir,
+	root_unlink,
+	NULL
 };
 
 void vfs_init(void)
@@ -383,6 +475,7 @@ void vfs_init(void)
 	vfs_root.refs = 1;
 	vfs_root.operations = &root_operations;
 	vfs_root.private_data = NULL;
+	vfs_root.canonical = &vfs_root;
 
 	ramfs_backing = ramfs_make_root();
 	if (ramfs_backing == NULL)

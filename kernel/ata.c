@@ -8,8 +8,6 @@
 #define MAX_PARTITIONS 128
 #define ATA_WAIT_TIMEOUT 2000000
 
-static volatile thread_t* ata_waiting_thread = NULL;
-static volatile uint8_t ata_irq_fired = 0;
 static spinlock_t ata_lock = {0};
 static block_device_t ata_physical_devices[4];
 static ata_private_t ata_private_data[4];
@@ -51,8 +49,6 @@ static void kernel_strcat_n(char* dest, const char* src, uint32_t cap)
 void ata_init(void)
 {
 	serial_write("ATA: Scanning IDE Drives...\r\n");
-	ata_waiting_thread = NULL;
-	ata_irq_fired = 0;
 
 	uint16_t bases[4] = { ATA_PRIMARY_BASE, ATA_PRIMARY_BASE, ATA_SECONDARY_BASE, ATA_SECONDARY_BASE };
 	uint8_t heads[4]  = { 0xE0, 0xF0, 0xE0, 0xF0 }; // 0xE0 = Master (LBA), 0xF0 = Slave (LBA)
@@ -89,16 +85,8 @@ void ata_init(void)
 
 void ata_irq_handler(void)
 {
-	ata_irq_fired = 1;
-
 	inb(ATA_PRIMARY_BASE + ATA_REG_STATUS);
 	inb(ATA_SECONDARY_BASE + ATA_REG_STATUS);
-
-	if (ata_waiting_thread != NULL)
-	{
-		scheduler_enqueue((thread_t*)ata_waiting_thread);
-		ata_waiting_thread = NULL;
-	}
 }
 
 static void ata_wait_bsy(uint16_t base)
@@ -145,15 +133,9 @@ static void ata_send_lba(uint16_t base, uint8_t head, uint32_t lba, uint8_t sect
 int ata_read_sector_raw(uint16_t base_port, uint8_t drive_head, uint32_t lba, uint16_t* buffer)
 {
 	spin_lock(&ata_lock);
-	ata_irq_fired = 0;
-
-	ata_waiting_thread = current_thread;
-	ata_waiting_thread->state = THREAD_BLOCKED;
 
 	ata_send_lba(base_port, drive_head, lba, 1);
 	outb(base_port + ATA_REG_COMMAND, ATA_CMD_READ);
-
-	__asm__ volatile("int $0x20");
 
 	ata_wait_bsy(base_port);
 	ata_wait_drq(base_port);
@@ -184,10 +166,6 @@ int ata_read_sector_raw(uint16_t base_port, uint8_t drive_head, uint32_t lba, ui
 int ata_write_sector_raw(uint16_t base_port, uint8_t drive_head, uint32_t lba, const uint16_t* buffer)
 {
 	spin_lock(&ata_lock);
-	ata_irq_fired = 0;
-
-	ata_waiting_thread = current_thread;
-	ata_waiting_thread->state = THREAD_BLOCKED;
 
 	ata_send_lba(base_port, drive_head, lba, 1);
 	outb(base_port + ATA_REG_COMMAND, ATA_CMD_WRITE);
@@ -200,13 +178,19 @@ int ata_write_sector_raw(uint16_t base_port, uint8_t drive_head, uint32_t lba, c
 		outw(base_port + ATA_REG_DATA, buffer[i]);
 	}
 
-	__asm__ volatile("int $0x20");
-
-	if (inb(base_port + ATA_REG_STATUS) & ATA_STATUS_ERR)
+	for (uint32_t timeout = ATA_WAIT_TIMEOUT; timeout > 0; timeout--)
 	{
-		serial_write("ATA: Write Error!\r\n");
-		spin_unlock(&ata_lock);
-		return -1;
+		uint8_t status = inb(base_port + ATA_REG_STATUS);
+		if (status & ATA_STATUS_ERR)
+		{
+			serial_write("ATA: Write Error!\r\n");
+			spin_unlock(&ata_lock);
+			return -1;
+		}
+		if (!(status & ATA_STATUS_BSY) && !(status & ATA_STATUS_DRQ))
+		{
+			break;
+		}
 	}
 
 	spin_unlock(&ata_lock);

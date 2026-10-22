@@ -17,7 +17,6 @@
 
 extern void syscall_entry(void);
 extern __attribute__((noreturn)) void context_iretq(uint64_t *frame);
-extern thread_t* keyboard_waiting_thread;
 extern thread_t* current_thread;
 extern volatile uint64_t system_ticks;
 
@@ -97,22 +96,34 @@ static uint64_t sys_read(cpu_registers_t *registers)
 
 	uint64_t got = fd_read((int)fd, buf, count);
 
-	if (got != 0 || count == 0)
+	if (got != FD_WOULD_BLOCK)
 	{
 		return got;
 	}
 
-	__asm__ volatile("cli");
-
-	if (keyboard_pop(&buf[0]))
+	thread_t* self = current_thread;
+	if (self == NULL)
 	{
-		__asm__ volatile("sti");
-		return 1;
+		return (uint64_t)-1;
 	}
 
-	keyboard_waiting_thread = current_thread;
+	__asm__ volatile("cli");
 
-	current_thread->state = THREAD_BLOCKED;
+	self->blocked_rip = registers->rip;
+	self->blocked_rax = registers->rax;
+	self->state = THREAD_BLOCKED;
+	fd_wait_add(self);
+
+	uint64_t again = fd_read(fd, buf, count);
+
+	if (again != FD_WOULD_BLOCK)
+	{
+		fd_wait_remove(self);
+		self->state = THREAD_RUNNING;
+		self->blocked_rip = 0;
+		__asm__ volatile("sti");
+		return again;
+	}
 
 	extern void yield_iretq(uint64_t new_rsp);
 	uint64_t new_rsp = schedule_callback((uint64_t)registers);
@@ -120,44 +131,39 @@ static uint64_t sys_read(cpu_registers_t *registers)
 	__builtin_unreachable();
 }
 
+static int sys_copy_path(uint64_t user_ptr, char* out, uint64_t out_size)
+{
+	for (uint64_t length = 0; length + 1 < out_size; length++)
+	{
+		if (!user_range_ok(user_ptr + length, 1, 0))
+		{
+			return -1;
+		}
+
+		char byte = ((const char*)user_ptr)[length];
+		if (byte == '\0')
+		{
+			out[length] = '\0';
+			return (length == 0) ? -1 : 0;
+		}
+
+		out[length] = byte;
+	}
+
+	return -1;
+}
+
 static uint64_t sys_open(cpu_registers_t *registers)
 {
 	uint64_t path_user = registers->rdi;
 	uint64_t flags = registers->rsi;
 
-	uint64_t length = 0;
-	while (length < 255)
-	{
-		if (!user_range_ok(path_user, length + 1, 0))
-		{
-			return (uint64_t)-1;
-		}
+	char path[VFS_NAMELENGTH];
 
-		char byte = ((const char*)path_user)[length];
-		if (byte == '\0')
-		{
-			break;
-		}
-
-		length++;
-	}
-
-	if (length == 0)
+	if (sys_copy_path(path_user, path, sizeof(path)) != 0)
 	{
 		return (uint64_t)-1;
 	}
-
-	if (!user_range_ok(path_user, length + 1, 0))
-	{
-		return (uint64_t)-1;
-	}
-
-	char path[256];
-	for (uint64_t i = 0; i < length; i++)
-	{
-		path[i] = ((const char*)path_user)[i];
-	}
-	path[length] = '\0';
 
 	uint32_t access = (uint32_t)flags & (VFS_RDWR | VFS_CREATE);
 
@@ -186,6 +192,44 @@ static uint64_t sys_dup(cpu_registers_t *registers)
 	}
 
 	return (uint64_t)fd_dup((int)fd);
+}
+
+static uint64_t sys_seek(cpu_registers_t *registers)
+{
+	uint64_t fd = registers->rdi;
+	int64_t offset = (int64_t)registers->rsi;
+	uint64_t whence = registers->rdx;
+
+	if (fd >= FD_MAX || whence > VFS_SEEK_END)
+	{
+		return (uint64_t)-1;
+	}
+
+	return (fd_seek((int)fd, offset, (int)whence) == 0) ? 0 : (uint64_t)-1;
+}
+
+static uint64_t sys_mkdir(cpu_registers_t *registers)
+{
+	char path[VFS_NAMELENGTH];
+
+	if (sys_copy_path(registers->rdi, path, sizeof(path)) != 0)
+	{
+		return (uint64_t)-1;
+	}
+
+	return (vfs_mkdir(path) == 0) ? 0 : (uint64_t)-1;
+}
+
+static uint64_t sys_unlink(cpu_registers_t *registers)
+{
+	char path[VFS_NAMELENGTH];
+
+	if (sys_copy_path(registers->rdi, path, sizeof(path)) != 0)
+	{
+		return (uint64_t)-1;
+	}
+
+	return (vfs_unlink(path) == 0) ? 0 : (uint64_t)-1;
 }
 
 static uint64_t sys_nanosleep(cpu_registers_t *registers)
@@ -247,10 +291,8 @@ static uint64_t sys_exit(cpu_registers_t *registers)
 
 	uint64_t new_rsp = schedule_callback((uint64_t)registers);
 
-	__asm__ volatile("mov %0, %%rsp" :: "r"(new_rsp));
-	__asm__ volatile("sti");
-
-	while(1) {}
+	extern void yield_iretq(uint64_t new_rsp);
+	yield_iretq(new_rsp);
 	__builtin_unreachable();
 }
 
@@ -260,9 +302,12 @@ static const syscall_fn_t syscall_table[SYSCALL_MAX + 1] =
 	[SYSCALL_WRITE]     = sys_write,
 	[SYSCALL_OPEN]      = sys_open,
 	[SYSCALL_CLOSE]     = sys_close,
+	[SYSCALL_SEEK]      = sys_seek,
 	[SYSCALL_DUP]       = sys_dup,
 	[SYSCALL_NAONSLEEP] = sys_nanosleep,
 	[SYSCALL_EXIT]      = sys_exit,
+	[SYSCALL_MKDIR]     = sys_mkdir,
+	[SYSCALL_UNLINK]    = sys_unlink,
 };
 
 void syscall_init(void)

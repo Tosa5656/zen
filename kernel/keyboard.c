@@ -10,8 +10,6 @@ static uint64_t head = 0;
 static uint64_t tail = 0;
 static uint64_t dropped = 0;
 
-thread_t* keyboard_waiting_thread = NULL;
-
 static uint64_t interrupts_off(void)
 {
 	uint64_t flags;

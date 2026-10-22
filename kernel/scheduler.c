@@ -71,6 +71,28 @@ thread_t* scheduler_dequeue(void)
 	return thread;
 }
 
+void scheduler_wake(thread_t* thread)
+{
+	if (thread == NULL)
+	{
+		return;
+	}
+
+	spin_lock(&scheduler_lock);
+
+	if (thread->state == THREAD_BLOCKED && thread->context != NULL &&
+		thread->blocked_rip >= 2)
+	{
+		thread->context->rip = thread->blocked_rip - 2;
+		thread->context->rax = thread->blocked_rax;
+		thread->blocked_rip = 0;
+	}
+
+	spin_unlock(&scheduler_lock);
+
+	scheduler_enqueue(thread);
+}
+
 void scheduler_sleep_enqueue(thread_t* thread)
 {
 	thread->state = THREAD_BLOCKED;
