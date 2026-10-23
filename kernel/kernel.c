@@ -125,6 +125,8 @@ void kmain(boot_info_t *boot_info)
 
 	framebuffer_init(boot_info, "/system/fonts/base_font.psf");
 
+	framebuffer_print_string("Проверка Unicode успешна\r\n", framebuffer_make_color(255, 255, 255), framebuffer_make_color(0, 0, 0));
+
 	usermode_test();
 
 	__asm__ volatile("sti");
