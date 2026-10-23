@@ -7,6 +7,9 @@
 #include "gdt.h"
 #include "keyboard.h"
 #include "scheduler.h"
+#include "ata.h"
+#include "fd.h"
+#include "panic.h"
 
 __attribute__((aligned(4096))) idt_entry_t idt_table[256] = {0};
 idt_ptr_t idt_pointer;
@@ -65,8 +68,6 @@ extern void irq15();
 
 extern void isr_ignored();
 
-extern thread_t* keyboard_waiting_thread;
-
 static const char* exception_messages[] =
 {
     "Division By Zero", "Debug", "Non-Maskable Interrupt", "Breakpoint",
@@ -92,9 +93,56 @@ void idt_set_gate(uint8_t vector, void (*handler)(), uint8_t type_attributes)
 	idt_table[vector].reserved = 0;
 }
 
+static void dump_page_fault_error(uint64_t error)
+{
+	serial_write("  cause: ");
+	serial_write((error & 0x1) ? "protection violation" : "page not present");
+	serial_write(", ");
+	serial_write((error & 0x2) ? "write" : "read");
+	serial_write(", ");
+	serial_write((error & 0x4) ? "user mode" : "kernel mode");
+
+	if (error & 0x8)
+	{
+		serial_write(", reserved bit set");
+	}
+
+	if (error & 0x10)
+	{
+		serial_write(", instruction fetch");
+	}
+
+	serial_write("\r\n");
+}
+
+static void dump_general_registers(cpu_registers_t* registers)
+{
+	serial_write("--- registers ---\r\n");
+
+	serial_field("RAX", registers->rax);
+	serial_field("RBX", registers->rbx);
+	serial_field("RCX", registers->rcx);
+	serial_field("RDX", registers->rdx);
+	serial_field("RSI", registers->rsi);
+	serial_field("RDI", registers->rdi);
+	serial_field("RBP", registers->rbp);
+	serial_field("RSP", registers->rsp);
+	serial_field("R8 ", registers->r8);
+	serial_field("R9 ", registers->r9);
+	serial_field("R10", registers->r10);
+	serial_field("R11", registers->r11);
+	serial_field("R12", registers->r12);
+	serial_field("R13", registers->r13);
+	serial_field("R14", registers->r14);
+	serial_field("R15", registers->r15);
+}
+
 void exception_handler(cpu_registers_t* registers)
 {
+	__asm__ volatile("cli");
+
 	serial_write("\r\n!!! KERNEL PANIC !!!\r\n");
+
 	if (registers->interrupt_number < 32)
 	{
 		serial_write("Exception: ");
@@ -104,26 +152,35 @@ void exception_handler(cpu_registers_t* registers)
 
 	serial_field("Interrupt vector", registers->interrupt_number);
 	serial_field("Error code", registers->error_code);
-	serial_field("Instruction RIP" , registers->rip);
-	serial_field("Code segment CS ", registers->cs);
-	serial_field("Stack pointer RSP", registers->rsp);
-	serial_field("RFLAGS", registers->rflags);
-	serial_field("RAX", registers->rax);
-	serial_field("RBX", registers->rbx);
-	serial_field("RBP", registers->rbp);
-	serial_field("RDI", registers->rdi);
 
 	if (registers->interrupt_number == 14)
 	{
-		uint64_t cr2_val;
-		__asm__ volatile("mov %%cr2, %0" : "=r"(cr2_val));
-		serial_field("Faulty address CR2", cr2_val);
+		dump_page_fault_error(registers->error_code);
 	}
 
-	while(1)
+	serial_write("--- fault frame ---\r\n");
+	serial_field("Instruction RIP", registers->rip);
+	serial_field("Code segment CS ", registers->cs);
+	serial_field("RFLAGS", registers->rflags);
+	serial_field("Stack pointer RSP", registers->rsp);
+	serial_field("Stack segment SS", registers->ss);
+
+	dump_general_registers(registers);
+
+	if (registers->interrupt_number == 14)
 	{
-		__asm__ volatile("cli; hlt");
+		uint64_t cr2_value;
+		uint64_t cr3_value;
+
+		__asm__ volatile("mov %%cr2, %0" : "=r"(cr2_value));
+		__asm__ volatile("mov %%cr3, %0" : "=r"(cr3_value));
+
+		serial_write("--- faulting address ---\r\n");
+		serial_field("CR2", cr2_value);
+		serial_field("CR3", cr3_value);
 	}
+
+	kernel_panic_halt();
 }
 
 void idt_init(void)
@@ -195,13 +252,11 @@ void irq_handler(cpu_registers_t* registers)
 	else if (irq_number == 1)
 	{
 		keyboard_push(inb(0x60));
-
-		if (keyboard_waiting_thread != NULL)
-		{
-			keyboard_waiting_thread->state = THREAD_READY;
-			scheduler_enqueue(keyboard_waiting_thread);
-			keyboard_waiting_thread = NULL;
-		}
+		fd_wait_wake_all();
+	}
+	else if (irq_number == 14 || irq_number == 15)
+	{
+		ata_irq_handler();
 	}
 	else
 	{

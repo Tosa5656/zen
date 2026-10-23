@@ -314,8 +314,6 @@ void buddy_free_pages(uint64_t physical_address, uint64_t count)
 		if (order > BUDDY_MAX_ORDER)
 		{
 			kernel_panic_value("buddy: free block too large", count);
-			spin_unlock(&buddy_lock);
-			return;
 		}
 	}
 

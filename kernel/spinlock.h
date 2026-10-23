@@ -36,4 +36,20 @@ static inline void spin_unlock(spinlock_t* spinlock)
 	}
 }
 
+static inline uint64_t irq_save(void)
+{
+	uint64_t rflags;
+	__asm__ volatile("pushfq; pop %0" : "=r"(rflags));
+	__asm__ volatile("cli" ::: "memory");
+	return rflags;
+}
+
+static inline void irq_restore(uint64_t rflags)
+{
+	if (rflags & (1ULL << 9))
+	{
+		__asm__ volatile("sti" ::: "memory");
+	}
+}
+
 #endif

@@ -6,6 +6,7 @@
 #include "msr.h"
 #include "timer.h"
 #include "spinlock.h"
+#include "fd.h"
 
 thread_t* current_thread = NULL;
 thread_t* idle_thread = NULL;
@@ -21,6 +22,8 @@ static spinlock_t scheduler_lock = {0};
 
 static void scheduler_idle_loop(void)
 {
+	__asm__ volatile("sti");
+
 	while(1)
 	{
 		scheduler_reclaim_dead_threads();
@@ -66,6 +69,28 @@ thread_t* scheduler_dequeue(void)
 
 	spin_unlock(&scheduler_lock);
 	return thread;
+}
+
+void scheduler_wake(thread_t* thread)
+{
+	if (thread == NULL)
+	{
+		return;
+	}
+
+	spin_lock(&scheduler_lock);
+
+	if (thread->state == THREAD_BLOCKED && thread->context != NULL &&
+		thread->blocked_rip >= 2)
+	{
+		thread->context->rip = thread->blocked_rip - 2;
+		thread->context->rax = thread->blocked_rax;
+		thread->blocked_rip = 0;
+	}
+
+	spin_unlock(&scheduler_lock);
+
+	scheduler_enqueue(thread);
 }
 
 void scheduler_sleep_enqueue(thread_t* thread)
@@ -138,6 +163,7 @@ thread_t* scheduler_create_user_thread(void* entry_point, uint64_t pml4_physical
 	ctx->r12 = ctx->r13 = ctx->r14 = ctx->r15 = 0;
 
 	thread->context = ctx;
+	thread->fds = fd_table_create_default();
 
 	scheduler_enqueue(thread);
 	return thread;
@@ -163,6 +189,12 @@ void scheduler_reclaim_dead_threads(void)
 	thread_t* thread = dead_queue_head;
 	dead_queue_head = dead_queue_head->next;
 	spin_unlock(&scheduler_lock);
+
+	if (thread->fds != NULL)
+	{
+		fd_table_destroy(thread->fds);
+		thread->fds = NULL;
+	}
 
 	uint64_t kstack_physical = VIRTUAL_TO_PHYSICAL(thread->kernel_stack_base);
 	physical_memory_manager_free_page(kstack_physical);
@@ -278,5 +310,8 @@ void scheduler_init(void)
 	ctx->r12 = ctx->r13 = ctx->r14 = ctx->r15 = 0;
 
 	idle_thread->context = ctx;
+
+	boot_thread->fds = fd_table_create_default();
+
 	serial_write("Scheduler initialized!\r\n");
 }

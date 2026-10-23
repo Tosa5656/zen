@@ -1,1 +1,1 @@
-In this new release, ZenOS has gained support for threads, user space, a basic libc (currently under development), system calls, improved allocators (Buddy and Slab), and spinlocks.
+In the new release, ZenOS has finally gained a framebuffer and full-fledged text output to the screen using the PSF2 font. Additionally, an ATA driver, a VFS, a FAT32 driver, and file descriptors have been added.

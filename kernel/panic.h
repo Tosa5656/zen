@@ -3,7 +3,8 @@
 
 #include <stdint.h>
 
-void kernel_panic(const char *message);
-void kernel_panic_value(const char *message, uint64_t value);
+__attribute__((noreturn)) void kernel_panic(const char *message);
+__attribute__((noreturn)) void kernel_panic_value(const char *message, uint64_t value);
+__attribute__((noreturn)) void kernel_panic_halt(void);
 
 #endif
