@@ -10,6 +10,7 @@
 #define SYSCALL_NAONSLEEP 35
 #define SYSCALL_EXIT      60
 #define SYSCALL_MKDIR     83
+#define SYSCALL_RMDIR     84
 #define SYSCALL_UNLINK    87
 
 #define SYSCALL_MAX 255

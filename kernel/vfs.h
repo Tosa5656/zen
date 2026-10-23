@@ -38,6 +38,7 @@ typedef struct vfs_operations
 	int (*create)(struct vfs_node* parent, const char* name, uint16_t mask);
 	int (*mkdir)(struct vfs_node* parent, const char* name, uint16_t mask);
 	int (*unlink)(struct vfs_node* parent, const char* name);
+	int (*rmdir)(struct vfs_node* parent, const char* name);
 	void (*release)(struct vfs_node* node);
 } vfs_operations_t;
 
@@ -66,15 +67,26 @@ typedef struct vfs_mount
 	vfs_node_t* node;
 } vfs_mount_t;
 
+typedef int (*vfs_dir_visitor_t)(const vfs_node_t* entry, void* context);
+
 void vfs_init(void);
 void fs_register(fs_driver_t* driver);
 int vfs_mount(const char* name, block_device_t* dev);
+int vfs_mount_root(block_device_t* dev);
 void vfs_node_get(vfs_node_t* node);
 void vfs_node_put(vfs_node_t* node);
 vfs_node_t* vfs_open(const char* path, uint32_t flags);
 int vfs_mkdir(const char* path);
 int vfs_unlink(const char* path);
+int vfs_rmdir(const char* path);
 int vfs_node_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer);
 int vfs_node_write(vfs_node_t* node, uint64_t offset, uint32_t size, const void* buffer);
+void vfs_close(vfs_node_t* node);
+int vfs_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer);
+int vfs_write(vfs_node_t* node, uint64_t offset, uint32_t size, const void* buffer);
+int vfs_list_directory(const char* path, vfs_dir_visitor_t visitor, void* context);
+uint32_t vfs_count_directory(const char* path);
+int64_t vfs_read_file(const char* path, void* buffer, uint32_t size);
+int64_t vfs_write_file(const char* path, const void* buffer, uint32_t size, uint32_t flags);
 
 #endif

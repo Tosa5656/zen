@@ -5,7 +5,5 @@
 #include "block_device.h"
 
 void fat32_init(void);
-int fat32_mount_all(void);
-void fat32_list_all(void);
 
 #endif

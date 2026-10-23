@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define MAX_BLOCK_DEVICES 4
+#define MAX_BLOCK_DEVICES 256
 
 typedef struct block_device
 {
@@ -19,6 +19,7 @@ typedef struct block_device
 
 void block_device_register(block_device_t* dev);
 block_device_t* block_device_get(uint32_t index);
+block_device_t* block_device_find(const char* name);
 uint32_t block_device_get_count(void);
 
 #endif

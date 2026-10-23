@@ -7,7 +7,6 @@
 #define FAT32_SECTOR 512
 #define FAT32_NAME_MAX 256
 #define FAT32_DIR_CACHE 32
-#define FAT32_LIST_MAX_DEPTH 8
 
 #define FAT32_EOC  0x0FFFFFF8u
 #define FAT32_BAD  0x0FFFFFF7u
@@ -133,6 +132,7 @@ static fs_driver_t fat32_driver;
 static fat32_mount_t* fat32_volumes[FAT32_MAX_VOLUMES];
 static uint32_t fat32_volume_count = 0;
 
+/* TODO: Remove after add libc */
 static int fat32_strieq(const char* a, const char* b)
 {
 	while (*a != '\0' && *b != '\0')
@@ -170,6 +170,7 @@ static void fat32_strcpy(char* dst, uint32_t dst_size, const char* src)
 	}
 	dst[len] = '\0';
 }
+/* ---- */
 
 static int fat32_sector_read(fat32_mount_t* m, uint64_t lba, void* buffer)
 {
@@ -1688,7 +1689,7 @@ static int fat32_mkdir(vfs_node_t* node, const char* name, uint16_t mask)
 	return 0;
 }
 
-static int fat32_unlink(vfs_node_t* node, const char* name)
+static int fat32_remove(vfs_node_t* node, const char* name, int want_dir)
 {
 	fat32_file_t* file = fat32_file_from(node);
 	if (file == NULL || !(file->attr & FAT32_ATTR_DIRECTORY))
@@ -1705,12 +1706,21 @@ static int fat32_unlink(vfs_node_t* node, const char* name)
 		return -1;
 	}
 
-	if (entry.attr & FAT32_ATTR_DIRECTORY)
+	int is_dir = (entry.attr & FAT32_ATTR_DIRECTORY) != 0;
+
+	if (want_dir && !is_dir)
 	{
-		if (fat32_dir_count(m, fat32_cluster_of(&entry)) > 0)
-		{
-			return -1;
-		}
+		return -1;
+	}
+
+	if (!want_dir && is_dir)
+	{
+		return -1;
+	}
+
+	if (is_dir && fat32_dir_count(m, fat32_cluster_of(&entry)) > 0)
+	{
+		return -1;
 	}
 
 	uint8_t sector[FAT32_SECTOR];
@@ -1732,6 +1742,16 @@ static int fat32_unlink(vfs_node_t* node, const char* name)
 	fat32_chain_free(m, fat32_cluster_of(&entry));
 
 	return 0;
+}
+
+static int fat32_unlink(vfs_node_t* node, const char* name)
+{
+	return fat32_remove(node, name, 0);
+}
+
+static int fat32_rmdir(vfs_node_t* node, const char* name)
+{
+	return fat32_remove(node, name, 1);
 }
 
 static void fat32_release(vfs_node_t* node)
@@ -1769,6 +1789,7 @@ static vfs_operations_t fat32_file_operations =
 	NULL,
 	NULL,
 	NULL,
+	NULL,
 	fat32_release
 };
 
@@ -1781,6 +1802,7 @@ static vfs_operations_t fat32_dir_operations =
 	fat32_create,
 	fat32_mkdir,
 	fat32_unlink,
+	fat32_rmdir,
 	fat32_release
 };
 
@@ -1941,100 +1963,4 @@ void fat32_init(void)
 	fat32_driver.mount = fat32_mount;
 
 	fs_register(&fat32_driver);
-}
-
-int fat32_mount_all(void)
-{
-	int mounted = 0;
-
-	for (uint32_t i = 0; i < block_device_get_count(); i++)
-	{
-		block_device_t* dev = block_device_get(i);
-		if (dev == NULL)
-		{
-			continue;
-		}
-
-		if (vfs_mount(dev->name, dev) == 0)
-		{
-			mounted++;
-		}
-	}
-
-	return mounted;
-}
-
-/* Recursive dump of one directory. Works straight off the on-disk entries so
- * it never allocates VFS nodes or touches the node cache. */
-static uint32_t fat32_list_dir(fat32_mount_t* m, uint32_t dir_cluster, uint32_t depth)
-{
-	uint32_t count = 0;
-	fat32_dirent_t entry;
-	char name[FAT32_NAME_MAX];
-
-	while (fat32_dir_nth(m, dir_cluster, count, &entry, name, sizeof(name)) == 0)
-	{
-		for (uint32_t i = 0; i < depth; i++)
-		{
-			serial_write("  ");
-		}
-
-		serial_write(name);
-
-		if (entry.attr & FAT32_ATTR_DIRECTORY)
-		{
-			serial_write("/\r\n");
-
-			if (depth < FAT32_LIST_MAX_DEPTH)
-			{
-				fat32_list_dir(m, fat32_cluster_of(&entry), depth + 1);
-			}
-			else
-			{
-				serial_write("  (depth limit)\r\n");
-			}
-		}
-		else
-		{
-			serial_write("  ");
-			serial_dec(entry.size);
-			serial_write(" bytes\r\n");
-		}
-
-		count++;
-	}
-
-	return count;
-}
-
-void fat32_list_all(void)
-{
-	if (fat32_volume_count == 0)
-	{
-		serial_write("FAT32: no volume mounted, nothing to list\r\n");
-		return;
-	}
-
-	serial_write("FAT32: listing ");
-	serial_dec(fat32_volume_count);
-	serial_write(" volume(s)\r\n");
-
-	for (uint32_t v = 0; v < fat32_volume_count; v++)
-	{
-		fat32_mount_t* m = fat32_volumes[v];
-
-		serial_write("FAT32: --- ");
-		serial_write(m->dev->name);
-		serial_write(" label=");
-		serial_write(m->label);
-		serial_write(" clusters=");
-		serial_dec(m->cluster_count);
-		serial_write(" ---\r\n");
-
-		uint32_t count = fat32_list_dir(m, m->root_cluster, 1);
-
-		serial_write("FAT32: ");
-		serial_dec(count);
-		serial_write(" entries\r\n");
-	}
 }

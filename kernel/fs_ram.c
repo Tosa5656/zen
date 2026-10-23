@@ -254,7 +254,7 @@ static void ramfs_release(vfs_node_t* node)
 	spin_unlock(&ramfs_lock);
 }
 
-static int ramfs_unlink(vfs_node_t* node, const char* name)
+static int ramfs_remove(vfs_node_t* node, const char* name, int want_dir)
 {
 	ram_dire_t* dir = ramfs_entry_from(node);
 	if (dir == NULL || dir->type != VFS_DIRECTORY)
@@ -274,6 +274,18 @@ static int ramfs_unlink(vfs_node_t* node, const char* name)
 	}
 
 	if (child == NULL)
+	{
+		spin_unlock(&ramfs_lock);
+		return -1;
+	}
+
+	if (want_dir && child->type != VFS_DIRECTORY)
+	{
+		spin_unlock(&ramfs_lock);
+		return -1;
+	}
+
+	if (!want_dir && child->type == VFS_DIRECTORY)
 	{
 		spin_unlock(&ramfs_lock);
 		return -1;
@@ -313,6 +325,16 @@ static int ramfs_unlink(vfs_node_t* node, const char* name)
 	spin_unlock(&ramfs_lock);
 
 	return 0;
+}
+
+static int ramfs_unlink(vfs_node_t* node, const char* name)
+{
+	return ramfs_remove(node, name, 0);
+}
+
+static int ramfs_rmdir(vfs_node_t* node, const char* name)
+{
+	return ramfs_remove(node, name, 1);
 }
 
 static int ramfs_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* buffer)
@@ -408,6 +430,7 @@ vfs_operations_t ramfs_operations =
 	ramfs_create,
 	ramfs_mkdir,
 	ramfs_unlink,
+	ramfs_rmdir,
 	ramfs_release
 };
 

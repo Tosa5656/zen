@@ -220,6 +220,18 @@ static uint64_t sys_mkdir(cpu_registers_t *registers)
 	return (vfs_mkdir(path) == 0) ? 0 : (uint64_t)-1;
 }
 
+static uint64_t sys_rmdir(cpu_registers_t *registers)
+{
+	char path[VFS_NAMELENGTH];
+
+	if (sys_copy_path(registers->rdi, path, sizeof(path)) != 0)
+	{
+		return (uint64_t)-1;
+	}
+
+	return (vfs_rmdir(path) == 0) ? 0 : (uint64_t)-1;
+}
+
 static uint64_t sys_unlink(cpu_registers_t *registers)
 {
 	char path[VFS_NAMELENGTH];
@@ -307,6 +319,7 @@ static const syscall_fn_t syscall_table[SYSCALL_MAX + 1] =
 	[SYSCALL_NAONSLEEP] = sys_nanosleep,
 	[SYSCALL_EXIT]      = sys_exit,
 	[SYSCALL_MKDIR]     = sys_mkdir,
+	[SYSCALL_RMDIR]     = sys_rmdir,
 	[SYSCALL_UNLINK]    = sys_unlink,
 };
 

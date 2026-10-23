@@ -275,10 +275,19 @@ static int devfs_unlink(vfs_node_t* node, const char* name)
 	return -1;
 }
 
+static int devfs_rmdir(vfs_node_t* node, const char* name)
+{
+	(void)node;
+	(void)name;
+
+	return -1;
+}
+
 vfs_operations_t chardev_operations =
 {
 	chardev_read,
 	chardev_write,
+	NULL,
 	NULL,
 	NULL,
 	NULL,
@@ -407,6 +416,7 @@ vfs_operations_t blockdev_operations =
 	NULL,
 	NULL,
 	NULL,
+	NULL,
 	NULL
 };
 
@@ -452,6 +462,7 @@ vfs_node_t* devfs_make_root(void)
 		devfs_create,
 		devfs_mkdir,
 		devfs_unlink,
+		devfs_rmdir,
 		NULL
 	};
 

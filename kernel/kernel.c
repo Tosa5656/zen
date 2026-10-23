@@ -45,6 +45,40 @@ static void dump_boot_info(const boot_info_t *info)
 	serial_field("smbios_address", info->smbios_address);
 }
 
+static int print_entry(const vfs_node_t* entry, void* context)
+  {
+    (void)context;
+
+    serial_write(entry->name);
+
+    if (entry->type == VFS_DIRECTORY)
+    {
+        serial_write("/");
+    }
+    else
+    {
+        serial_write("  ");
+        serial_dec(entry->size);
+        serial_write(" bytes");
+    }
+
+    serial_write("\r\n");
+
+    return 0;
+}
+
+void ls(const char* path)
+{
+	serial_write("ls ");
+	serial_write(path);
+	serial_write(":\r\n");
+	
+    if (vfs_list_directory(path, print_entry, NULL) != 0)
+    {
+        serial_write("ls: cannot list\r\n");
+	}
+}
+
 void kmain(boot_info_t *boot_info)
 {
 	serial_init();
@@ -59,41 +93,36 @@ void kmain(boot_info_t *boot_info)
 	serial_field("kernel size in bytes", kernel_size);
 
 	physical_memory_manager_init(boot_info);
-
 	heap_init(boot_info);
-
 	slab_init();
-
 	vfs_init();
-
 	acpi_init(boot_info);
-
 	acpi_relocate_tables();
 	physical_memory_manager_free_acpi_reclaimable(boot_info);
 	physical_memory_manager_lock_protected_regions(boot_info);
-
 	heap_print_stats();
-
 	keyboard_init();
-
 	slab_print_details();
 	buddy_print_stats();
-
 	gdt_init();
-
 	idt_init();
-
 	apic_init();
-
 	scheduler_init();
-
 	syscall_init();
-
 	ata_init();
-
 	fat32_init();
-	fat32_mount_all();
-	fat32_list_all();
+
+	block_device_t* system_partition = block_device_find("hd0p2");
+	if (system_partition != NULL)
+	{
+		vfs_mount_root(system_partition);
+	}
+	else
+	{
+		serial_write("kernel: hd0p2 not found, root stays ramfs\r\n");
+	}
+
+	ls("/SYSTEM/FONTS");
 
 	usermode_test();
 
