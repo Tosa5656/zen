@@ -233,8 +233,6 @@ void slab_free(void *pointer)
 	if (slab == 0)
 	{
 		kernel_panic_value("slab_free: not a slab object", (uint64_t)pointer);
-		spin_unlock(&slab_lock);
-		return;
 	}
 
 	slab_cache_t *cache = slab->cache;
@@ -243,15 +241,11 @@ void slab_free(void *pointer)
 	if (slab->in_use == 0)
 	{
 		kernel_panic_value("slab_free: empty slab", (uint64_t)pointer);
-		spin_unlock(&slab_lock);
-		return;
 	}
 
 	if (object->free_magic == SLAB_OBJECT_FREE_MAGIC)
 	{
 		kernel_panic_value("slab_free: double free", (uint64_t)pointer);
-		spin_unlock(&slab_lock);
-		return;
 	}
 
 	int was_full = (slab->free_objects == 0);

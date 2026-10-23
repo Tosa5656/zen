@@ -17,6 +17,7 @@
 #include "vfs.h"
 #include "fd.h"
 #include "fs/fat32.h"
+#include "framebuffer.h"
 
 extern uint8_t _kernel_start[];
 extern uint8_t _kernel_end[];
@@ -72,7 +73,7 @@ void ls(const char* path)
 	serial_write("ls ");
 	serial_write(path);
 	serial_write(":\r\n");
-	
+
     if (vfs_list_directory(path, print_entry, NULL) != 0)
     {
         serial_write("ls: cannot list\r\n");
@@ -122,7 +123,7 @@ void kmain(boot_info_t *boot_info)
 		serial_write("kernel: hd0p2 not found, root stays ramfs\r\n");
 	}
 
-	ls("/SYSTEM/FONTS");
+	framebuffer_init(boot_info, "/system/fonts/base_font.psf");
 
 	usermode_test();
 

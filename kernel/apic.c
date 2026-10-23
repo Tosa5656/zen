@@ -172,7 +172,7 @@ void apic_init(void)
 	uint64_t apic_base = (lapic_physical & 0xFFFFFFFFFFFFF000ULL) | APIC_BASE_ENABLE;
 	write_msr(IA32_APIC_BASE_MSR, apic_base);
 
-	lapic = (volatile uint32_t *)(KERNEL_MMIO_BASE + lapic_physical);
+	lapic = (volatile uint32_t *)mmio_to_virtual(lapic_physical);
 
 	lapic_write(LAPIC_TPR, 0);
 	lapic_write(LAPIC_SVR, 0x100 | LAPIC_SPURIOUS_VECTOR);
@@ -190,7 +190,7 @@ void apic_init(void)
 		uint64_t ioapic_physical = madt->ioapics[0].address;
 		map_mmio(ioapic_physical);
 
-		ioapic = (volatile uint32_t *)(KERNEL_MMIO_BASE + ioapic_physical);
+		ioapic = (volatile uint32_t *)mmio_to_virtual(ioapic_physical);
 		gsi_base = madt->ioapics[0].global_system_interrupt_base;
 
 		uint32_t max_redirection_entry = (ioapic_read(IOAPIC_VERSION) >> 16) & 0xFF;

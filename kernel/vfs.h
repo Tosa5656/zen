@@ -76,6 +76,7 @@ int vfs_mount_root(block_device_t* dev);
 void vfs_node_get(vfs_node_t* node);
 void vfs_node_put(vfs_node_t* node);
 vfs_node_t* vfs_open(const char* path, uint32_t flags);
+int vfs_exists(const char* path);
 int vfs_mkdir(const char* path);
 int vfs_unlink(const char* path);
 int vfs_rmdir(const char* path);

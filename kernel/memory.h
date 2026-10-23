@@ -55,6 +55,11 @@ static inline void *physical_to_virtual(uint64_t physical)
 	return (void *)(physical + KERNEL_PHYSICAL_MAP_BASE);
 }
 
+static inline void *mmio_to_virtual(uint64_t physical)
+{
+	return (void *)(physical + KERNEL_MMIO_BASE);
+}
+
 void boot_alloc_init(void);
 uint64_t allocate_boot_page(void);
 

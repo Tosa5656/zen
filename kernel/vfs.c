@@ -334,6 +334,22 @@ vfs_node_t* vfs_open(const char* path, uint32_t flags)
 	return node;
 }
 
+int vfs_exists(const char* path)
+{
+	if (path == NULL || path[0] == '\0')
+	{
+		return 0;
+	}
+
+	spin_lock(&vfs_lock);
+
+	vfs_node_t* node = vfs_walk(&vfs_root, path, NULL, NULL, NULL);
+
+	spin_unlock(&vfs_lock);
+
+	return (node != NULL) ? 1 : 0;
+}
+
 int vfs_mkdir(const char* path)
 {
 	if (path == NULL || path[0] == '\0')

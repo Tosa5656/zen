@@ -1426,7 +1426,7 @@ static int fat32_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* bu
 			chunk = wanted - done;
 		}
 
-		if (fat32_cluster_read(m, cluster, in_cluster, chunk, out + done) != 0)
+		if (fat32_cluster_read(m, cluster, in_cluster, chunk, out + done) != (int)chunk)
 		{
 			return -1;
 		}
@@ -1523,7 +1523,7 @@ static int fat32_write(vfs_node_t* node, uint64_t offset, uint32_t size, const v
 			chunk = size - done;
 		}
 
-		if (fat32_cluster_write(m, cluster, in_cluster, chunk, in + done) != 0)
+		if (fat32_cluster_write(m, cluster, in_cluster, chunk, in + done) != (int)chunk)
 		{
 			return -1;
 		}
@@ -1673,8 +1673,8 @@ static int fat32_mkdir(vfs_node_t* node, const char* name, uint16_t mask)
 	dot.cluster_low = (uint16_t)fresh;
 	dotdot.cluster_low = (uint16_t)file->first_cluster;
 
-	if (fat32_cluster_write(m, fresh, 0, sizeof(dot), &dot) != 0 ||
-		fat32_cluster_write(m, fresh, sizeof(dot), sizeof(dotdot), &dotdot) != 0)
+	if (fat32_cluster_write(m, fresh, 0, sizeof(dot), &dot) != (int)sizeof(dot) ||
+		fat32_cluster_write(m, fresh, sizeof(dot), sizeof(dotdot), &dotdot) != (int)sizeof(dotdot))
 	{
 		fat32_set_next(m, fresh, 0);
 		return -1;

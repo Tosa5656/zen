@@ -35,7 +35,8 @@ kernel: idt cpu syscall user spinlock
 	$(CC) $(CFLAGS) -c fs_dev.c -o fs_dev.o
 	$(CC) $(CFLAGS) -c fs/fat32.c -o fat32.o
 	$(CC) $(CFLAGS) -c fd.c -o fd.o
-	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o gdt.o gdt_flush.o panic.o buddy.o slab.o heap.o keyboard.o ata.o block_device.o vfs.o fs_ram.o fs_dev.o fat32.o fd.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o $(ARCH_CODE)/cpu.o scheduler.o $(ARCH_CODE)/syscall.o syscall.o $(ARCH_CODE)/user.o $(ARCH_CODE)/spinlock.o usertest.o -o kernel.bin
+	$(CC) $(CFLAGS) -c framebuffer.c -o framebuffer.o
+	$(LD) -T linker.ld kernel_entry.o kernel.o memory.o serial.o pic.o timer.o acpi.o apic.o gdt.o gdt_flush.o panic.o buddy.o slab.o heap.o keyboard.o ata.o block_device.o vfs.o fs_ram.o fs_dev.o fat32.o fd.o framebuffer.o $(ARCH_CODE)/idt.o $(ARCH_CODE)/interrupts.o $(ARCH_CODE)/cpu.o scheduler.o $(ARCH_CODE)/syscall.o syscall.o $(ARCH_CODE)/user.o $(ARCH_CODE)/spinlock.o usertest.o -o kernel.bin
 
 idt:
 	make -C ../arch/$(ARCH)/ idt

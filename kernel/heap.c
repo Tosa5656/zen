@@ -456,15 +456,11 @@ void kfree(void *pointer)
 		if (header->magic == HEAP_MAGIC_FREE)
 		{
 			kernel_panic_value("kfree: double free", address);
-			spin_unlock(&heap_lock);
-			return;
 		}
 
 		if (header->magic != HEAP_MAGIC_INUSE)
 		{
 			kernel_panic_value("kfree: bad pointer", address);
-			spin_unlock(&heap_lock);
-			return;
 		}
 
 		heap_used -= header->size;
@@ -476,8 +472,6 @@ void kfree(void *pointer)
 	if (address < KERNEL_PHYSICAL_MAP_BASE)
 	{
 		kernel_panic_value("kfree: bad pointer", address);
-		spin_unlock(&heap_lock);
-		return;
 	}
 
 	if (buddy_page_is_slab(address - KERNEL_PHYSICAL_MAP_BASE))
@@ -492,15 +486,11 @@ void kfree(void *pointer)
 	if (header->magic == HEAP_MAGIC_FREE)
 	{
 		kernel_panic_value("kfree: double free", address);
-		spin_unlock(&heap_lock);
-		return;
 	}
 
 	if (header->magic != HEAP_MAGIC_INUSE)
 	{
 		kernel_panic_value("kfree: bad pointer", address);
-		spin_unlock(&heap_lock);
-		return;
 	}
 
 	heap_used -= header->size;
