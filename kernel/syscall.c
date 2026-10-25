@@ -1,5 +1,5 @@
 #include "syscall.h"
-#include "syscalls.h"
+#include <sys/syscalls.h>
 #include "msr.h"
 #include "cpu.h"
 #include "memory.h"

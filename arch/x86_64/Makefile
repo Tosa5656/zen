@@ -18,9 +18,6 @@ cpu:
 syscall:
 	$(AS) -f elf64 syscall.asm -o syscall.o
 
-user:
-	$(AS) -f elf64 user.asm -o user.o
-
 spinlock:
 	$(AS) -f elf64 spinlock.asm -o spinlock.o
 

@@ -34,7 +34,18 @@ static void scheduler_idle_loop(void)
 
 void scheduler_enqueue(thread_t* thread)
 {
+	if (thread == NULL)
+	{
+		return;
+	}
+
 	spin_lock(&scheduler_lock);
+
+	if (thread == ready_queue_tail)
+	{
+		spin_unlock(&scheduler_lock);
+		return;
+	}
 
 	thread->state = THREAD_READY;
 	thread->next = NULL;

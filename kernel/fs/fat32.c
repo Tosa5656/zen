@@ -3,6 +3,7 @@
 #include "serial.h"
 
 #include <stddef.h>
+#include <string.h>
 
 #define FAT32_SECTOR 512
 #define FAT32_NAME_MAX 256
@@ -160,16 +161,6 @@ static void fat32_memzero(void* dst, uint64_t size)
 	}
 }
 
-static void fat32_strcpy(char* dst, uint32_t dst_size, const char* src)
-{
-	uint32_t len = 0;
-	while (src[len] != '\0' && len + 1 < dst_size)
-	{
-		dst[len] = src[len];
-		len++;
-	}
-	dst[len] = '\0';
-}
 /* ---- */
 
 static int fat32_sector_read(fat32_mount_t* m, uint64_t lba, void* buffer)
@@ -944,7 +935,8 @@ static int fat32_dir_nth(fat32_mount_t* m, uint32_t dir_cluster, uint32_t wanted
 						{
 							char short_name[16];
 							fat32_shortname_to_string(entry, short_name);
-							fat32_strcpy(out_name, out_name_size, short_name);
+							strncpy(out_name, short_name, out_name_size - 1);
+							out_name[out_name_size - 1] = '\0';
 						}
 					}
 
@@ -1358,7 +1350,8 @@ static vfs_node_t* fat32_node_create(fat32_mount_t* m, const char* name, uint32_
 		return NULL;
 	}
 
-	fat32_strcpy(node->name, sizeof(node->name), name);
+	strncpy(node->name, name, sizeof(node->name) - 1);
+	node->name[sizeof(node->name) - 1] = '\0';
 
 	file->mount = m;
 	file->first_cluster = first_cluster;
@@ -1589,7 +1582,8 @@ static int fat32_readdir(vfs_node_t* node, uint32_t index, vfs_node_t* out_node)
 		return -1;
 	}
 
-	fat32_strcpy(out_node->name, sizeof(out_node->name), name);
+	strncpy(out_node->name, name, sizeof(out_node->name) - 1);
+	out_node->name[sizeof(out_node->name) - 1] = '\0';
 	out_node->type = (entry.attr & FAT32_ATTR_DIRECTORY) ? VFS_DIRECTORY : VFS_FILE;
 	out_node->size = entry.size;
 	out_node->inode_num = fat32_cluster_of(&entry);

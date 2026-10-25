@@ -26,6 +26,7 @@ static glyph_entry_t* glyph_map = NULL;
 static uint32_t glyph_map_count = 0;
 static uint32_t glyph_map_capacity = 0;
 static int font_has_unicode_map = 0;
+static int framebuffer_ready = 0;
 
 static uint32_t cursor_x = 0;
 static uint32_t cursor_y = 0;
@@ -272,7 +273,6 @@ static int font_build_unicode_map(void)
 
 	glyph_map_sort();
 
-	/* Keep the first glyph for each codepoint (sort is stable). */
 	uint32_t unique = 0;
 
 	for (uint32_t i = 0; i < glyph_map_count; i++)
@@ -427,6 +427,32 @@ void framebuffer_print_string(const char* str, uint32_t fg_color, uint32_t bg_co
 	}
 }
 
+void framebuffer_console_write(const char* data, uint32_t size)
+{
+	if (data == NULL || size == 0 || !framebuffer_ready)
+	{
+		return;
+	}
+
+	uint32_t fg = framebuffer_make_color(255, 255, 255);
+	uint32_t bg = framebuffer_make_color(0, 0, 0);
+
+	const uint8_t* p = (const uint8_t*)data;
+	const uint8_t* end = p + size;
+
+	while (p < end)
+	{
+		uint32_t codepoint = 0;
+
+		if (!font_utf8_next(&p, end, &codepoint))
+		{
+			continue;
+		}
+
+		framebuffer_put_char(codepoint, fg, bg);
+	}
+}
+
 void framebuffer_clear_screen(uint32_t color)
 {
 	for (uint32_t y = 0; y < framebuffer_height; y++)
@@ -534,6 +560,8 @@ void framebuffer_init(const boot_info_t *info, const char* font_path)
 	}
 
 	serial_write("Framebuffer font initialized successfully.\r\n");
+
+	framebuffer_ready = 1;
 
 	framebuffer_print_string("Framebuffer successfully inited!\r\n", framebuffer_make_color(255, 255, 255), framebuffer_make_color(0, 0, 0));
 }

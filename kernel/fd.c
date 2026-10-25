@@ -31,9 +31,9 @@ fd_table_t* fd_table_create_default(void)
 		uint32_t flags;
 	} std[3] =
 	{
-		{ "dev/stdin",  VFS_RDONLY },
-		{ "dev/stdout", VFS_WRONLY },
-		{ "dev/stderr", VFS_WRONLY }
+		{ "devices/stdin",  VFS_RDONLY },
+		{ "devices/stdout", VFS_WRONLY },
+		{ "devices/stderr", VFS_WRONLY }
 	};
 
 	for (int fd = 0; fd < 3; fd++)

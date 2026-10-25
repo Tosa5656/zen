@@ -10,7 +10,6 @@
 #include "buddy.h"
 #include "keyboard.h"
 #include "syscall.h"
-#include "usertest.h"
 #include "idt.h"
 #include "scheduler.h"
 #include "ata.h"
@@ -18,6 +17,7 @@
 #include "fd.h"
 #include "fs/fat32.h"
 #include "framebuffer.h"
+#include "elf.h"
 
 extern uint8_t _kernel_start[];
 extern uint8_t _kernel_end[];
@@ -127,7 +127,7 @@ void kmain(boot_info_t *boot_info)
 
 	framebuffer_print_string("Проверка Unicode успешна\r\n", framebuffer_make_color(255, 255, 255), framebuffer_make_color(0, 0, 0));
 
-	usermode_test();
+	elf_execute("/system/bin/test_user.elf");
 
 	__asm__ volatile("sti");
 

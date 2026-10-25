@@ -1,6 +1,7 @@
 #include "vfs.h"
 #include "block_device.h"
 #include "keyboard.h"
+#include "framebuffer.h"
 #include "serial.h"
 #include "spinlock.h"
 
@@ -106,6 +107,8 @@ static int chardev_write(vfs_node_t* node, uint64_t offset, uint32_t size, const
 		serial_putc(text[i]);
 		console_push(text[i]);
 	}
+
+	framebuffer_console_write(text, size);
 
 	return (int)size;
 }
