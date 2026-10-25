@@ -104,12 +104,12 @@ boot_info: resb 88
 
 section .text
 
-%INCLUDE "io_real.asm"
-%INCLUDE "memory.asm"
-%INCLUDE "graphics.asm"
-%INCLUDE "framebuffer.asm"
+%INCLUDE "bootloader/io_real.asm"
+%INCLUDE "bootloader/memory.asm"
+%INCLUDE "bootloader/graphics.asm"
+%INCLUDE "bootloader/framebuffer.asm"
 
-%INCLUDE "io.asm"
+%INCLUDE "bootloader/io.asm"
 
 bits 32
 
@@ -430,9 +430,9 @@ fill_boot_info:
 	pop rbp
 	ret
 
-%INCLUDE "gpt.asm"
-%INCLUDE "fat32.asm"
-%INCLUDE "boot_info.asm"
+%INCLUDE "bootloader/gpt.asm"
+%INCLUDE "bootloader/fat32.asm"
+%INCLUDE "bootloader/boot_info.asm"
 
 section .text
 
@@ -511,7 +511,7 @@ gdt64_descriptor:
 	dw gdt64_end - gdt64_start - 1
 	dd gdt64_start
 
-%INCLUDE "font.asm"
+%INCLUDE "bootloader/font.asm"
 
 times 10240-($-$$) db 0 ; 10 KB
 

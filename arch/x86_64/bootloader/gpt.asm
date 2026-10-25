@@ -5,7 +5,7 @@ bits 64
 global check_gpt
 global gpt_extract_parameters
 
-%INCLUDE "io.asm"
+%INCLUDE "bootloader/io.asm"
 
 section .bss
 alignb 8

@@ -30,7 +30,7 @@ _start:
 	cli
 	hlt
 
-%INCLUDE "io_real.asm"
+%INCLUDE "bootloader/io_real.asm"
 bits 16
 
 clear_screen:

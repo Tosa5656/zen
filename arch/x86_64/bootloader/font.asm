@@ -7,6 +7,6 @@
 section .text
 align 16
 font_bitmap:
-	incbin "base_font.bin"
+	incbin "bootloader/base_font.bin"
 
 %endif
