@@ -34,7 +34,7 @@ run:
 bootloader:
 	make -C arch/$(ARCH) bootloader
 
-kernel: zlibc
+kernel: zlibc bootloader
 	make -C kernel
 
 system: zlibc
