@@ -26,6 +26,7 @@ jobs:
           sudo apt-get install -y gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu
           sudo ln -s /usr/bin/x86_64-linux-gnu-gcc /usr/bin/x86_64-elf-gcc
           sudo ln -s /usr/bin/x86_64-linux-gnu-ld /usr/bin/x86_64-elf-ld
+          sudo ln -s /usr/bin/x86_64-linux-gnu-ar /usr/bin/x86_64-elf-ar
 
       - name: Run make
         run: make -j$(nproc)
