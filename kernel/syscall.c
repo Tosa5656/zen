@@ -11,6 +11,7 @@
 #include "time.h"
 #include "timer.h"
 #include "fd.h"
+#include <string.h>
 
 #define TIMER_HZ SYSTEM_TICK_HZ
 #define MS_PER_TICK (1000 / TIMER_HZ)
@@ -182,6 +183,108 @@ static uint64_t sys_close(cpu_registers_t *registers)
 	return (fd_close((int)fd) == 0) ? 0 : (uint64_t)-1;
 }
 
+static uint64_t sys_brk_page_down(uint64_t address)
+{
+	return address & ~(uint64_t)(PAGE_SIZE - 1);
+}
+
+static uint64_t sys_brk_page_up(uint64_t address)
+{
+	return (address + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+}
+
+static void sys_brk_release_page(uint64_t pml4_physical, uint64_t page)
+{
+	uint64_t physical = virtual_memory_manager_translate(pml4_physical, page);
+	if (physical == 0)
+	{
+		return;
+	}
+
+	virtual_memory_manager_unmap_user_page(pml4_physical, page);
+	physical_memory_manager_free_page(physical);
+}
+
+static uint64_t sys_brk_reserve_pages(thread_t* self, uint64_t from, uint64_t to)
+{
+	for (uint64_t page = from; page < to; page += PAGE_SIZE)
+	{
+		if (virtual_memory_manager_translate(self->page_directory, page) != 0)
+		{
+			continue;
+		}
+
+		uint64_t physical = physical_memory_manager_alloc_page();
+		if (physical == 0)
+		{
+			while (page > from)
+			{
+				page -= PAGE_SIZE;
+				sys_brk_release_page(self->page_directory, page);
+			}
+
+			return 0;
+		}
+
+		memset(physical_to_virtual(physical), 0, PAGE_SIZE);
+		virtual_memory_manager_map_user_page(self->page_directory, page, physical,
+			PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER);
+	}
+
+	return 1;
+}
+
+static uint64_t sys_brk(cpu_registers_t* registers)
+{
+	uint64_t requested = registers->rdi;
+	thread_t* self = current_thread;
+
+	if (self == NULL || self->page_directory == 0 || self->brk_start == 0)
+	{
+		return (uint64_t)-1;
+	}
+
+	uint64_t current = self->program_break;
+
+	if (requested == 0)
+	{
+		return current;
+	}
+
+	if (requested < self->brk_start || requested >= USER_BRK_LIMIT)
+	{
+		return current;
+	}
+
+	if (requested == current)
+	{
+		return current;
+	}
+
+	if (requested > current)
+	{
+		if (sys_brk_reserve_pages(self, sys_brk_page_up(current), sys_brk_page_up(requested)) == 0)
+		{
+			return current;
+		}
+
+		self->program_break = requested;
+		return requested;
+	}
+
+	uint64_t page = sys_brk_page_up(requested);
+	uint64_t end = sys_brk_page_down(current);
+
+	while (page < end)
+	{
+		sys_brk_release_page(self->page_directory, page);
+		page += PAGE_SIZE;
+	}
+
+	self->program_break = requested;
+	return requested;
+}
+
 static uint64_t sys_dup(cpu_registers_t *registers)
 {
 	uint64_t fd = registers->rdi;
@@ -315,6 +418,7 @@ static const syscall_fn_t syscall_table[SYSCALL_MAX + 1] =
 	[SYSCALL_OPEN]      = sys_open,
 	[SYSCALL_CLOSE]     = sys_close,
 	[SYSCALL_SEEK]      = sys_seek,
+	[SYSCALL_BRK]       = sys_brk,
 	[SYSCALL_DUP]       = sys_dup,
 	[SYSCALL_NAONSLEEP] = sys_nanosleep,
 	[SYSCALL_EXIT]      = sys_exit,

@@ -27,6 +27,8 @@ typedef struct thread
 	uint64_t blocked_rax;
 	struct thread* next;
 	struct thread* wait_next;
+	uint64_t brk_start;
+	uint64_t program_break;
 } thread_t;
 
 void scheduler_init(void);

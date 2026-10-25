@@ -83,6 +83,8 @@ int elf_execute(const char* path)
 
 	Elf64_Program_Header* program_headers = (Elf64_Program_Header*)(elf_buffer + program_header_offset);
 
+	uint64_t heap_start = 0;
+
 	for (uint16_t i = 0; i < program_header_count; i++)
 	{
 		Elf64_Program_Header* program_header = &program_headers[i];
@@ -114,6 +116,11 @@ int elf_execute(const char* path)
 			memset(virtual_kernel_ptr, 0, PAGE_SIZE);
 		}
 
+		if (end_virtual > heap_start)
+		{
+			heap_start = end_virtual;
+		}
+
 		uint64_t bytes_copied = 0;
 		while (bytes_copied < program_header->p_size_in_file)
 		{
@@ -138,8 +145,8 @@ int elf_execute(const char* path)
 
 	kfree(elf_buffer);
 
-	uint64_t user_stack_top = USER_SPACE_END - PAGE_SIZE;
-	uint64_t user_stack_base = user_stack_top - (16 * PAGE_SIZE);
+	uint64_t user_stack_top = USER_STACK_TOP;
+	uint64_t user_stack_base = USER_STACK_BASE;
 
 	for (uint64_t virtual_page = user_stack_base; virtual_page < user_stack_top; virtual_page += PAGE_SIZE)
 	{
@@ -160,6 +167,9 @@ int elf_execute(const char* path)
 		serial_write("Failed to create thread for executable!");
 		return -6;
 	}
+
+	user_thread->brk_start = heap_start;
+	user_thread->program_break = heap_start;
 
 	return 0;
 }

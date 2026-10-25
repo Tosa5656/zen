@@ -26,7 +26,8 @@ clean:
 
 	make -C arch/$(ARCH) clean
 	make -C kernel clean
-
+	make -C os clean
+	make -C zlibc clean
 run:
 	qemu-system-x86_64 -hda zen.img -m 2G -serial stdio
 

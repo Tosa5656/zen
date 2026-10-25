@@ -7,6 +7,7 @@
 #include "timer.h"
 #include "spinlock.h"
 #include "fd.h"
+#include <string.h>
 
 thread_t* current_thread = NULL;
 thread_t* idle_thread = NULL;
@@ -150,6 +151,8 @@ thread_t* scheduler_create_user_thread(void* entry_point, uint64_t pml4_physical
 {
 	uint64_t tcb_physical = physical_memory_manager_alloc_page();
 	thread_t* thread = (thread_t*)physical_to_virtual(tcb_physical);
+
+	memset(thread, 0, sizeof(*thread));
 
 	uint64_t kstack_physical = physical_memory_manager_alloc_page();
 	void* kstack_virtual = physical_to_virtual(kstack_physical);
