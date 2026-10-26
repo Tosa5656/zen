@@ -133,12 +133,6 @@ void kmain(boot_info_t *boot_info)
 
 	while(1)
 	{
-		uint8_t scancode;
-		while (keyboard_pop(&scancode))
-		{
-			serial_write("Key pressed! Scancode = ");
-			serial_dec(scancode);
-			serial_write("\r\n");
-		}
+		__asm__ volatile("hlt");
 	}
 }

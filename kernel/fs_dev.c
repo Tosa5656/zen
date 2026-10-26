@@ -27,6 +27,65 @@ static char console_buffer[DEV_CONSOLE_BUFFER];
 static uint64_t console_head = 0;
 static uint64_t console_tail = 0;
 
+static const char scancode_ascii[128] =
+{
+	0, 0, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',
+	'\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',
+	0, 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`',
+	0, '\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0,
+	'*', 0, ' ', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	'7', '8', '9', '-', '4', '5', '6', '+', '1', '2', '3', '0', '.'
+};
+
+static int keyboard_shift = 0;
+
+static int keyboard_getchar(void)
+{
+	uint8_t scancode;
+
+	if (!keyboard_pop(&scancode))
+	{
+		return -1;
+	}
+
+	if (scancode == 0x2A || scancode == 0x36)
+	{
+		keyboard_shift = 1;
+		return -1;
+	}
+	if (scancode == 0xAA || scancode == 0xB6)
+	{
+		keyboard_shift = 0;
+		return -1;
+	}
+
+	if (scancode & 0x80)
+	{
+		return -1;
+	}
+
+	int c = scancode_ascii[scancode];
+	if (c == 0)
+	{
+		return -1;
+	}
+
+	if (keyboard_shift)
+	{
+		if (c >= 'a' && c <= 'z')
+		{
+			c -= 32;
+		}
+		else if (c >= '0' && c <= '9')
+		{
+			const char shifted[] = ")!@#$%^&*(";
+			c = shifted[c - '0'];
+		}
+	}
+
+	return c;
+}
+
 static void console_push(char c)
 {
 	uint64_t flags = irq_save();
@@ -83,9 +142,14 @@ static int chardev_read(vfs_node_t* node, uint64_t offset, uint32_t size, void* 
 	uint64_t got = 0;
 	uint8_t* out = (uint8_t*)buffer;
 
-	while (got < size && keyboard_pop(&out[got]))
+	while (got < size)
 	{
-		got++;
+		int c = keyboard_getchar();
+		if (c < 0)
+		{
+			break;
+		}
+		out[got++] = (uint8_t)c;
 	}
 
 	return (int)got;

@@ -2,6 +2,12 @@
 
 int main(int argc, char **argv, char **envp)
 {
-	const char* msg = "Hello, World from C!\r\n";
-	printf(msg);
+	char str[100];
+	if (scanf("%99s", str) == 1)
+	{
+		printf(str);
+		fflush(stdout);
+	}
+
+	return 0;
 }
