@@ -369,7 +369,9 @@ static uint64_t sys_seek(cpu_registers_t *registers)
 		return (uint64_t)-1;
 	}
 
-	return (fd_seek((int)fd, offset, (int)whence) == 0) ? 0 : (uint64_t)-1;
+	int64_t position = fd_seek((int)fd, offset, (int)whence);
+
+	return (position >= 0) ? (uint64_t)position : (uint64_t)-1;
 }
 
 static uint64_t sys_mkdir(cpu_registers_t *registers)
@@ -455,6 +457,8 @@ static uint64_t sys_exit(cpu_registers_t *registers)
 	serial_dec(code);
 	serial_write("\r\n");
 
+	current_process->exit_code = (int64_t)code;
+
 	__asm__ volatile("cli");
 
 	uint64_t user_pml4 = current_process->page_directory;
@@ -472,6 +476,76 @@ static uint64_t sys_exit(cpu_registers_t *registers)
 	__builtin_unreachable();
 }
 
+static uint64_t sys_waitpid(cpu_registers_t *registers)
+{
+	int64_t pid = (int64_t)registers->rdi;
+	int *status_user = (int *)registers->rsi;
+	uint64_t options = registers->rdx;
+
+	(void)options;
+
+	if (!user_range_ok((uint64_t)status_user, sizeof(int), 1))
+	{
+		return (uint64_t)-1;
+	}
+
+	for (;;)
+	{
+		process_t* zombie = process_take_zombie(pid);
+
+		if (zombie != NULL)
+		{
+			int64_t code = zombie->exit_code;
+			uint64_t zombie_pid = zombie->id;
+			process_release(zombie);
+
+			if (status_user != NULL)
+			{
+				*status_user = (int)((code & 0xFF) << 8);
+			}
+
+			return zombie_pid;
+		}
+
+		if (options & 1) /* WNOHANG */
+		{
+			return 0;
+		}
+
+		process_t* self = current_process;
+		if (self == NULL)
+		{
+			return (uint64_t)-1;
+		}
+
+		__asm__ volatile("cli");
+
+		self->blocked_rip = registers->rip;
+		self->blocked_rax = registers->rax;
+		self->state = PROCESS_BLOCKED;
+		process_wait_enqueue(self);
+
+		uint64_t new_rsp = schedule_callback((uint64_t)registers);
+
+		extern void yield_iretq(uint64_t new_rsp);
+		yield_iretq(new_rsp);
+		__builtin_unreachable();
+	}
+}
+
+static uint64_t sys_getpid(cpu_registers_t *registers)
+{
+	(void)registers;
+	return (current_process != NULL) ? current_process->id : 0;
+}
+
+static uint64_t sys_getppid(cpu_registers_t *registers)
+{
+	(void)registers;
+	/* Иерархии процессов пока нет — все процессы «сироты» с родителем 0 (init). */
+	return 0;
+}
+
 static const syscall_fn_t syscall_table[SYSCALL_MAX + 1] =
 {
 	[SYSCALL_READ]      = sys_read,
@@ -484,6 +558,9 @@ static const syscall_fn_t syscall_table[SYSCALL_MAX + 1] =
 	[SYSCALL_FCNTL]     = sys_fcntl,
 	[SYSCALL_OPENAT]    = sys_openat,
 	[SYSCALL_NAONSLEEP] = sys_nanosleep,
+	[SYSCALL_GETPID]    = sys_getpid,
+	[SYSCALL_GETPPID]   = sys_getppid,
+	[SYSCALL_WAITPID]   = sys_waitpid,
 	[SYSCALL_EXIT]      = sys_exit,
 	[SYSCALL_MKDIR]     = sys_mkdir,
 	[SYSCALL_RMDIR]     = sys_rmdir,

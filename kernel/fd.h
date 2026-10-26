@@ -47,7 +47,7 @@ uint64_t fd_read(int fd, void* buffer, uint64_t count);
 uint64_t fd_write(int fd, const void* buffer, uint64_t count);
 int fd_close(int fd);
 int fd_dup(int fd);
-int fd_seek(int fd, int64_t offset, int whence);
+int64_t fd_seek(int fd, int64_t offset, int whence);
 int fd_dup_from(int fd, int start);
 int fd_fcntl(int fd, int cmd, uint64_t arg);
 void fd_wait_add(struct process* proc);

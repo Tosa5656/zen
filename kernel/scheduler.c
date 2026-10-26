@@ -15,6 +15,8 @@ process_t* ready_queue_head = NULL;
 process_t* ready_queue_tail = NULL;
 process_t* sleep_queue_head = NULL;
 process_t* dead_queue_head = NULL;
+static process_t* zombie_queue_head = NULL;
+static process_t* zombie_waiters_head = NULL;
 
 extern volatile uint64_t system_ticks;
 
@@ -187,10 +189,85 @@ void process_kill_current(void)
 {
 	spin_lock(&scheduler_lock);
 
-	current_process->state = PROCESS_DEAD;
+	current_process->state = PROCESS_ZOMBIE;
 
-	current_process->next = dead_queue_head;
-	dead_queue_head = current_process;
+	current_process->zombie_next = zombie_queue_head;
+	zombie_queue_head = current_process;
+
+	process_t* waiter = zombie_waiters_head;
+	while (waiter != NULL)
+	{
+		process_t* next = waiter->zombie_wait_next;
+		waiter->zombie_wait_next = NULL;
+		scheduler_wake(waiter);
+		waiter = next;
+	}
+	zombie_waiters_head = NULL;
+
+	spin_unlock(&scheduler_lock);
+}
+
+static process_t** zombie_find_slot(int64_t pid)
+{
+	process_t** slot = &zombie_queue_head;
+
+	while (*slot != NULL)
+	{
+		if (pid <= 0 || (*slot)->id == (uint64_t)pid)
+		{
+			return slot;
+		}
+		slot = &(*slot)->zombie_next;
+	}
+
+	return NULL;
+}
+
+process_t* process_take_zombie(int64_t pid)
+{
+	spin_lock(&scheduler_lock);
+
+	process_t** slot = zombie_find_slot(pid);
+	if (slot == NULL)
+	{
+		spin_unlock(&scheduler_lock);
+		return NULL;
+	}
+
+	process_t* zombie = *slot;
+	*slot = zombie->zombie_next;
+	zombie->zombie_next = NULL;
+
+	spin_unlock(&scheduler_lock);
+	return zombie;
+}
+
+void process_release(process_t* process)
+{
+	if (process == NULL)
+	{
+		return;
+	}
+
+	if (process->fds != NULL)
+	{
+		fd_table_destroy(process->fds);
+		process->fds = NULL;
+	}
+
+	uint64_t kstack_physical = VIRTUAL_TO_PHYSICAL(process->kernel_stack_base);
+	physical_memory_manager_free_page(kstack_physical);
+
+	uint64_t tcb_physical = VIRTUAL_TO_PHYSICAL(process);
+	physical_memory_manager_free_page(tcb_physical);
+}
+
+void process_wait_enqueue(process_t* process)
+{
+	spin_lock(&scheduler_lock);
+
+	process->zombie_wait_next = zombie_waiters_head;
+	zombie_waiters_head = process;
 
 	spin_unlock(&scheduler_lock);
 }

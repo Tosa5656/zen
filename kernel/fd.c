@@ -500,7 +500,7 @@ int fd_fcntl(int fd, int cmd, uint64_t arg)
 	}
 }
 
-int fd_seek(int fd, int64_t offset, int whence)
+int64_t fd_seek(int fd, int64_t offset, int whence)
 {
 	fd_table_t* table = NULL;
 	vfs_fd_t* handle = fd_pin(fd, &table);
@@ -511,7 +511,7 @@ int fd_seek(int fd, int64_t offset, int whence)
 		return -1;
 	}
 
-	int result = -1;
+	int64_t result = -1;
 
 	if (handle->node->type == VFS_FILE || handle->node->type == VFS_BLOCKDEVICE)
 	{
@@ -536,7 +536,7 @@ int fd_seek(int fd, int64_t offset, int whence)
 		if (target >= 0 && (uint64_t)target <= handle->node->size)
 		{
 			handle->offset = (uint64_t)target;
-			result = 0;
+			result = target;
 		}
 	}
 

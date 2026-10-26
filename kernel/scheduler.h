@@ -11,6 +11,7 @@ typedef enum
 	PROCESS_READY,
 	PROCESS_RUNNING,
 	PROCESS_BLOCKED,
+	PROCESS_ZOMBIE,
 	PROCESS_DEAD
 } process_state_t;
 
@@ -29,6 +30,9 @@ typedef struct process
 	struct process* wait_next;
 	uint64_t brk_start;
 	uint64_t program_break;
+	int64_t exit_code;
+	struct process* zombie_next;
+	struct process* zombie_wait_next;
 } process_t;
 
 void scheduler_init(void);
@@ -42,6 +46,9 @@ void scheduler_sleep_enqueue(process_t* process);
 void scheduler_check_sleeping(void);
 void process_kill_current(void);
 void process_reclaim_dead(void);
+process_t* process_take_zombie(int64_t pid);
+void process_release(process_t* process);
+void process_wait_enqueue(process_t* process);
 
 extern process_t* current_process;
 
