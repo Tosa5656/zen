@@ -271,6 +271,18 @@ int partition_read_adapter(struct block_device* dev, uint64_t lba, uint32_t coun
 	return parent_disk->read_blocks(parent_disk, parent_lba, count, buffer);
 }
 
+int partition_write_adapter(struct block_device* dev, uint64_t lba, uint32_t count, void* buffer)
+{
+	block_device_t* parent_disk = (block_device_t*)dev->private_data;
+	if (parent_disk == NULL || parent_disk->write_blocks == NULL) return -1;
+
+	uint64_t parent_lba = lba + dev->id;
+	if (lba + count > dev->total_sectors) return -1;
+	if (parent_lba + count > parent_disk->total_sectors) return -1;
+
+	return parent_disk->write_blocks(parent_disk, parent_lba, count, buffer);
+}
+
 void ata_parse_mbr(block_device_t* phys_dev)
 {
 	uint16_t sector_buffer[256];
@@ -306,7 +318,7 @@ void ata_parse_mbr(block_device_t* phys_dev)
 
 			p_dev->total_sectors = part->total_sectors;
 			p_dev->read_blocks = partition_read_adapter;
-			p_dev->write_blocks = phys_dev->write_blocks;
+			p_dev->write_blocks = partition_write_adapter;
 			p_dev->private_data = (void*)phys_dev;
 
 			block_device_register(p_dev);
@@ -436,7 +448,7 @@ void ata_parse_gpt(block_device_t* phys_dev)
 
 				p_dev->total_sectors = part_sectors;
 				p_dev->read_blocks = partition_read_adapter;
-				p_dev->write_blocks = phys_dev->write_blocks;
+				p_dev->write_blocks = partition_write_adapter;
 				p_dev->private_data = (void*)phys_dev;
 
 				block_device_register(p_dev);

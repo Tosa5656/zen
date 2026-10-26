@@ -15,4 +15,4 @@ clean:
 	rm -rf *.elf
 
 test_user:
-	$(CC) $(CFLAGS) $(CRT1) $(LIBC) test_user.c -o test_user.elf
+	$(CC) $(CFLAGS) $(CRT1) test_user.c -Wl,--start-group $(LIBC) -Wl,--end-group -o test_user.elf

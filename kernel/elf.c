@@ -148,7 +148,7 @@ int elf_execute(const char* path)
 	uint64_t user_stack_top = USER_STACK_TOP;
 	uint64_t user_stack_base = USER_STACK_BASE;
 
-	for (uint64_t virtual_page = user_stack_base; virtual_page < user_stack_top; virtual_page += PAGE_SIZE)
+	for (uint64_t virtual_page = user_stack_base; virtual_page <= user_stack_top; virtual_page += PAGE_SIZE)
 	{
 		uint64_t physical_frame = physical_memory_manager_alloc_page();
 		virtual_memory_manager_map_user_page(user_pml4_physical, virtual_page, physical_frame, PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER);
@@ -158,7 +158,7 @@ int elf_execute(const char* path)
 	thread_t* user_thread = scheduler_create_user_thread(
 		(void*)entry_point,
 		user_pml4_physical,
-		user_stack_top - 8
+		user_stack_top
 	);
 
 	if (!user_thread)

@@ -382,6 +382,21 @@ int fd_dup(int fd)
 		return -1;
 	}
 
+	return fd_dup_from(fd, FD_STDERR + 1);
+}
+
+int fd_dup_from(int fd, int start)
+{
+	if (fd < 0 || fd >= FD_MAX || start < 0 || start >= FD_MAX)
+	{
+		return -1;
+	}
+
+	if (start <= FD_STDERR)
+	{
+		start = FD_STDERR + 1;
+	}
+
 	fd_table_t* table = fd_table_current();
 	if (table == NULL)
 	{
@@ -398,7 +413,7 @@ int fd_dup(int fd)
 	}
 
 	int slot = -1;
-	for (int i = FD_STDERR + 1; i < FD_MAX; i++)
+	for (int i = start; i < FD_MAX; i++)
 	{
 		if (table->descriptors[i] == NULL)
 		{
@@ -416,6 +431,73 @@ int fd_dup(int fd)
 	spin_unlock(&table->lock);
 
 	return slot;
+}
+
+static int fd_get_flags(int fd)
+{
+	fd_table_t* table = NULL;
+	vfs_fd_t* handle = fd_pin(fd, &table);
+
+	if (handle == NULL || handle->node == NULL)
+	{
+		fd_unpin(table, handle);
+		return -1;
+	}
+
+	uint32_t flags = handle->flags;
+
+	fd_unpin(table, handle);
+
+	return (int)flags;
+}
+
+int fd_fcntl(int fd, int cmd, uint64_t arg)
+{
+	switch (cmd)
+	{
+	case FD_FCNTL_DUPFD:
+	case FD_FCNTL_DUPFD_CLOEXEC:
+	{
+		if (arg >= FD_MAX)
+		{
+			return -1;
+		}
+
+		return fd_dup_from(fd, (int)arg);
+	}
+	case FD_FCNTL_GETFD:
+	{
+		return (fd_get_flags(fd) == -1) ? -1 : 0;
+	}
+	case FD_FCNTL_SETFD:
+	case FD_FCNTL_SETFL:
+	{
+		return (fd_get_flags(fd) == -1) ? -1 : 0;
+	}
+	case FD_FCNTL_GETFL:
+	{
+		int flags = fd_get_flags(fd);
+
+		if (flags == -1)
+		{
+			return -1;
+		}
+
+		if ((flags & VFS_RDWR) == VFS_RDWR)
+		{
+			return FD_FCNTL_O_RDWR;
+		}
+
+		if ((flags & VFS_WRONLY) != 0)
+		{
+			return FD_FCNTL_O_WRONLY;
+		}
+
+		return FD_FCNTL_O_RDONLY;
+	}
+	default:
+		return -1;
+	}
 }
 
 int fd_seek(int fd, int64_t offset, int whence)

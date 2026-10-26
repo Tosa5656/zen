@@ -12,9 +12,37 @@
 #include "timer.h"
 #include "fd.h"
 #include <string.h>
+#include <fcntl.h>
 
 #define TIMER_HZ SYSTEM_TICK_HZ
 #define MS_PER_TICK (1000 / TIMER_HZ)
+
+static uint32_t sys_open_access(uint64_t flags)
+{
+	uint32_t access = 0;
+
+	switch (flags & O_ACCMODE)
+	{
+	case O_RDONLY:
+		access = VFS_RDONLY;
+		break;
+	case O_WRONLY:
+		access = VFS_WRONLY;
+		break;
+	case O_RDWR:
+		access = VFS_RDWR;
+		break;
+	default:
+		break;
+	}
+
+	if (flags & O_CREAT)
+	{
+		access |= VFS_CREATE;
+	}
+
+	return access;
+}
 
 extern void syscall_entry(void);
 extern __attribute__((noreturn)) void context_iretq(uint64_t *frame);
@@ -166,9 +194,28 @@ static uint64_t sys_open(cpu_registers_t *registers)
 		return (uint64_t)-1;
 	}
 
-	uint32_t access = (uint32_t)flags & (VFS_RDWR | VFS_CREATE);
+	return (uint64_t)fd_open(path, sys_open_access(flags));
+}
 
-	return (uint64_t)fd_open(path, access);
+static uint64_t sys_openat(cpu_registers_t *registers)
+{
+	int64_t dirfd = (int64_t)registers->rdi;
+	uint64_t path_user = registers->rsi;
+	uint64_t flags = registers->rdx;
+
+	char path[VFS_NAMELENGTH];
+
+	if (sys_copy_path(path_user, path, sizeof(path)) != 0)
+	{
+		return (uint64_t)-1;
+	}
+
+	if (path[0] != '/' && dirfd != AT_FDCWD)
+	{
+		return (uint64_t)-1;
+	}
+
+	return (uint64_t)fd_open(path, sys_open_access(flags));
 }
 
 static uint64_t sys_close(cpu_registers_t *registers)
@@ -297,6 +344,20 @@ static uint64_t sys_dup(cpu_registers_t *registers)
 	return (uint64_t)fd_dup((int)fd);
 }
 
+static uint64_t sys_fcntl(cpu_registers_t *registers)
+{
+	uint64_t fd = registers->rdi;
+	uint64_t cmd = registers->rsi;
+	uint64_t arg = registers->rdx;
+
+	if (fd >= FD_MAX)
+	{
+		return (uint64_t)-1;
+	}
+
+	return (uint64_t)fd_fcntl((int)fd, (int)cmd, arg);
+}
+
 static uint64_t sys_seek(cpu_registers_t *registers)
 {
 	uint64_t fd = registers->rdi;
@@ -420,6 +481,8 @@ static const syscall_fn_t syscall_table[SYSCALL_MAX + 1] =
 	[SYSCALL_SEEK]      = sys_seek,
 	[SYSCALL_BRK]       = sys_brk,
 	[SYSCALL_DUP]       = sys_dup,
+	[SYSCALL_FCNTL]     = sys_fcntl,
+	[SYSCALL_OPENAT]    = sys_openat,
 	[SYSCALL_NAONSLEEP] = sys_nanosleep,
 	[SYSCALL_EXIT]      = sys_exit,
 	[SYSCALL_MKDIR]     = sys_mkdir,
