@@ -155,21 +155,21 @@ int elf_execute(const char* path)
 		memset(physical_to_virtual(physical_frame), 0, PAGE_SIZE);
 	}
 
-	thread_t* user_thread = scheduler_create_user_thread(
+	process_t* new_process = process_create_user(
 		(void*)entry_point,
 		user_pml4_physical,
 		user_stack_top
 	);
 
-	if (!user_thread)
+	if (!new_process)
 	{
 		// TODO: memory clear if faield
-		serial_write("Failed to create thread for executable!");
+		serial_write("Failed to create process for executable!");
 		return -6;
 	}
 
-	user_thread->brk_start = heap_start;
-	user_thread->program_break = heap_start;
+	new_process->brk_start = heap_start;
+	new_process->program_break = heap_start;
 
 	return 0;
 }

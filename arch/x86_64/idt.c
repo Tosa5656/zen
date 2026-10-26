@@ -247,7 +247,7 @@ void irq_handler(cpu_registers_t* registers)
 	if (irq_number == 0)
 	{
 		timer_handler();
-		scheduler_check_sleeping_threads();
+		scheduler_check_sleeping();
 	}
 	else if (irq_number == 1)
 	{

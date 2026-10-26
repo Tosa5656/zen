@@ -23,7 +23,7 @@
 #define FD_FCNTL_O_WRONLY 1
 #define FD_FCNTL_O_RDWR   2
 
-struct thread;
+struct process;
 
 typedef struct vfs_fd
 {
@@ -50,8 +50,8 @@ int fd_dup(int fd);
 int fd_seek(int fd, int64_t offset, int whence);
 int fd_dup_from(int fd, int start);
 int fd_fcntl(int fd, int cmd, uint64_t arg);
-void fd_wait_add(struct thread* thread);
-void fd_wait_remove(struct thread* thread);
+void fd_wait_add(struct process* proc);
+void fd_wait_remove(struct process* proc);
 void fd_wait_wake_all(void);
 
 #endif

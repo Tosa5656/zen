@@ -9,16 +9,16 @@
 #include "fd.h"
 #include <string.h>
 
-thread_t* current_thread = NULL;
-thread_t* idle_thread = NULL;
-thread_t* ready_queue_head = NULL;
-thread_t* ready_queue_tail = NULL;
-thread_t* sleep_queue_head = NULL;
-thread_t* dead_queue_head = NULL;
+process_t* current_process = NULL;
+process_t* idle_process = NULL;
+process_t* ready_queue_head = NULL;
+process_t* ready_queue_tail = NULL;
+process_t* sleep_queue_head = NULL;
+process_t* dead_queue_head = NULL;
 
 extern volatile uint64_t system_ticks;
 
-static uint64_t next_thread_id = 1;
+static uint64_t next_pid = 1;
 static spinlock_t scheduler_lock = {0};
 
 static void scheduler_idle_loop(void)
@@ -27,51 +27,51 @@ static void scheduler_idle_loop(void)
 
 	while(1)
 	{
-		scheduler_reclaim_dead_threads();
+		process_reclaim_dead();
 
 		__asm__ volatile("hlt");
 	}
 }
 
-void scheduler_enqueue(thread_t* thread)
+void scheduler_enqueue(process_t* process)
 {
-	if (thread == NULL)
+	if (process == NULL)
 	{
 		return;
 	}
 
 	spin_lock(&scheduler_lock);
 
-	if (thread == ready_queue_tail)
+	if (process == ready_queue_tail)
 	{
 		spin_unlock(&scheduler_lock);
 		return;
 	}
 
-	thread->state = THREAD_READY;
-	thread->next = NULL;
+	process->state = PROCESS_READY;
+	process->next = NULL;
 	if(!ready_queue_head)
 	{
-		ready_queue_head = thread;
-		ready_queue_tail = thread;
+		ready_queue_head = process;
+		ready_queue_tail = process;
 	}
 	else
 	{
-		ready_queue_tail->next = thread;
-		ready_queue_tail = thread;
+		ready_queue_tail->next = process;
+		ready_queue_tail = process;
 	}
 
 	spin_unlock(&scheduler_lock);
 }
 
-thread_t* scheduler_dequeue(void)
+process_t* scheduler_dequeue(void)
 {
 	spin_lock(&scheduler_lock);
 
-	thread_t* thread = NULL;
+	process_t* process = NULL;
 	if (ready_queue_head)
 	{
-		thread = ready_queue_head;
+		process = ready_queue_head;
 		ready_queue_head = ready_queue_head->next;
 		if (!ready_queue_head)
 		{
@@ -80,48 +80,48 @@ thread_t* scheduler_dequeue(void)
 	}
 
 	spin_unlock(&scheduler_lock);
-	return thread;
+	return process;
 }
 
-void scheduler_wake(thread_t* thread)
+void scheduler_wake(process_t* process)
 {
-	if (thread == NULL)
+	if (process == NULL)
 	{
 		return;
 	}
 
 	spin_lock(&scheduler_lock);
 
-	if (thread->state == THREAD_BLOCKED && thread->context != NULL &&
-		thread->blocked_rip >= 2)
+	if (process->state == PROCESS_BLOCKED && process->context != NULL &&
+		process->blocked_rip >= 2)
 	{
-		thread->context->rip = thread->blocked_rip - 2;
-		thread->context->rax = thread->blocked_rax;
-		thread->blocked_rip = 0;
+		process->context->rip = process->blocked_rip - 2;
+		process->context->rax = process->blocked_rax;
+		process->blocked_rip = 0;
 	}
 
 	spin_unlock(&scheduler_lock);
 
-	scheduler_enqueue(thread);
+	scheduler_enqueue(process);
 }
 
-void scheduler_sleep_enqueue(thread_t* thread)
+void scheduler_sleep_enqueue(process_t* process)
 {
-	thread->state = THREAD_BLOCKED;
-	thread->next = sleep_queue_head;
-	sleep_queue_head = thread;
+	process->state = PROCESS_BLOCKED;
+	process->next = sleep_queue_head;
+	sleep_queue_head = process;
 }
 
-void scheduler_check_sleeping_threads(void)
+void scheduler_check_sleeping(void)
 {
-	thread_t* previous = NULL;
-	thread_t* current = sleep_queue_head;
+	process_t* previous = NULL;
+	process_t* current = sleep_queue_head;
 
 	while (current != NULL)
 	{
 		if (system_ticks >= current->sleep_until_ticks)
 		{
-			thread_t* next = current->next;
+			process_t* next = current->next;
 			if (previous == NULL)
 			{
 				sleep_queue_head = next;
@@ -132,7 +132,7 @@ void scheduler_check_sleeping_threads(void)
 			}
 
 			scheduler_enqueue(current);
-			serial_write("nanosleep: woken thread at tick ");
+			serial_write("nanosleep: woken process at tick ");
 			serial_dec(current->sleep_until_ticks);
 			serial_write("\r\n");
 
@@ -147,19 +147,19 @@ void scheduler_check_sleeping_threads(void)
 }
 
 
-thread_t* scheduler_create_user_thread(void* entry_point, uint64_t pml4_physical, uint64_t user_rsp)
+process_t* process_create_user(void* entry_point, uint64_t pml4_physical, uint64_t user_rsp)
 {
 	uint64_t tcb_physical = physical_memory_manager_alloc_page();
-	thread_t* thread = (thread_t*)physical_to_virtual(tcb_physical);
+	process_t* process = (process_t*)physical_to_virtual(tcb_physical);
 
-	memset(thread, 0, sizeof(*thread));
+	memset(process, 0, sizeof(*process));
 
 	uint64_t kstack_physical = physical_memory_manager_alloc_page();
 	void* kstack_virtual = physical_to_virtual(kstack_physical);
 
-	thread->kernel_stack_base = kstack_virtual;
-	thread->page_directory = pml4_physical;
-	thread->id = next_thread_id++;
+	process->kernel_stack_base = kstack_virtual;
+	process->page_directory = pml4_physical;
+	process->id = next_pid++;
 
 	cpu_registers_t* ctx = (cpu_registers_t*)((uintptr_t)kstack_virtual + 4096 - sizeof(cpu_registers_t));
 
@@ -176,104 +176,104 @@ thread_t* scheduler_create_user_thread(void* entry_point, uint64_t pml4_physical
 	ctx->r8 = ctx->r9 = ctx->r10 = ctx->r11 = 0;
 	ctx->r12 = ctx->r13 = ctx->r14 = ctx->r15 = 0;
 
-	thread->context = ctx;
-	thread->fds = fd_table_create_default();
+	process->context = ctx;
+	process->fds = fd_table_create_default();
 
-	scheduler_enqueue(thread);
-	return thread;
+	scheduler_enqueue(process);
+	return process;
 }
 
-void scheduler_kill_current_thread(void)
+void process_kill_current(void)
 {
 	spin_lock(&scheduler_lock);
 
-	current_thread->state = THREAD_DEAD;
+	current_process->state = PROCESS_DEAD;
 
-	current_thread->next = dead_queue_head;
-	dead_queue_head = current_thread;
+	current_process->next = dead_queue_head;
+	dead_queue_head = current_process;
 
 	spin_unlock(&scheduler_lock);
 }
 
-void scheduler_reclaim_dead_threads(void)
+void process_reclaim_dead(void)
 {
 	if (!dead_queue_head) return;
 
 	spin_lock(&scheduler_lock);
-	thread_t* thread = dead_queue_head;
+	process_t* process = dead_queue_head;
 	dead_queue_head = dead_queue_head->next;
 	spin_unlock(&scheduler_lock);
 
-	if (thread->fds != NULL)
+	if (process->fds != NULL)
 	{
-		fd_table_destroy(thread->fds);
-		thread->fds = NULL;
+		fd_table_destroy(process->fds);
+		process->fds = NULL;
 	}
 
-	uint64_t kstack_physical = VIRTUAL_TO_PHYSICAL(thread->kernel_stack_base);
+	uint64_t kstack_physical = VIRTUAL_TO_PHYSICAL(process->kernel_stack_base);
 	physical_memory_manager_free_page(kstack_physical);
 
-	uint64_t tcb_physical = VIRTUAL_TO_PHYSICAL(thread);
+	uint64_t tcb_physical = VIRTUAL_TO_PHYSICAL(process);
 	physical_memory_manager_free_page(tcb_physical);
 
-	serial_write("Kernel resources of dead thread reclaimed.\r\n");
+	serial_write("Kernel resources of dead process reclaimed.\r\n");
 }
 
 uint64_t schedule_callback(uint64_t old_rsp)
 {
-	if (!current_thread) return old_rsp;
-	current_thread->context = (cpu_registers_t*)old_rsp;
+	if (!current_process) return old_rsp;
+	current_process->context = (cpu_registers_t*)old_rsp;
 
-	if (current_thread->state == THREAD_RUNNING && current_thread != idle_thread
-	    && current_thread->kernel_stack_base != NULL)
+	if (current_process->state == PROCESS_RUNNING && current_process != idle_process
+	    && current_process->kernel_stack_base != NULL)
 	{
-		scheduler_enqueue(current_thread);
+		scheduler_enqueue(current_process);
 	}
 
-	thread_t* next_thread = scheduler_dequeue();
-	if (!next_thread)
+	process_t* next_proc = scheduler_dequeue();
+	if (!next_proc)
 	{
-		if(current_thread->state == THREAD_RUNNING)
+		if(current_process->state == PROCESS_RUNNING)
 		{
-			next_thread = current_thread;
+			next_proc = current_process;
 		}
 		else
 		{
-			next_thread = idle_thread;
+			next_proc = idle_process;
 		}
 	}
 
-	thread_t* previous = current_thread;
-	next_thread->state = THREAD_RUNNING;
-	current_thread = next_thread;
+	process_t* previous = current_process;
+	next_proc->state = PROCESS_RUNNING;
+	current_process = next_proc;
 
 	uint64_t active_cr3 = virtual_memory_manager_get_current_pml4();
-	if (active_cr3 != next_thread->page_directory)
+	if (active_cr3 != next_proc->page_directory)
 	{
-		virtual_memory_manager_switch_address_space(next_thread->page_directory);
+		virtual_memory_manager_switch_address_space(next_proc->page_directory);
 	}
 
-	if (next_thread != previous)
+	if (next_proc != previous)
 	{
-		tss_set_rsp0((uint64_t)next_thread->kernel_stack_base + 4096);
+		tss_set_rsp0((uint64_t)next_proc->kernel_stack_base + 4096);
 
 		uint64_t gs_base_address = read_msr(IA32_GS_BASE_MSR);
 		if (gs_base_address != 0)
 		{
 			uint64_t* kernel_rsp_field = (uint64_t*)gs_base_address;
-			*kernel_rsp_field = (uint64_t)next_thread->kernel_stack_base + 4096;
+			*kernel_rsp_field = (uint64_t)next_proc->kernel_stack_base + 4096;
 		}
 	}
 
-	return (uint64_t)next_thread->context;
+	return (uint64_t)next_proc->context;
 }
 
 bool scheduler_should_switch(void)
 {
-	thread_t* t = ready_queue_head;
+	process_t* t = ready_queue_head;
 	while (t != NULL)
 	{
-		if (t != current_thread)
+		if (t != current_process)
 		{
 			return true;
 		}
@@ -286,27 +286,27 @@ bool scheduler_should_switch(void)
 void scheduler_init(void)
 {
 	uint64_t tcb_physical = physical_memory_manager_alloc_page();
-	thread_t* boot_thread = (thread_t*)physical_to_virtual(tcb_physical);
+	process_t* boot_proc = (process_t*)physical_to_virtual(tcb_physical);
 
-	boot_thread->id = 0;
-	boot_thread->state = THREAD_RUNNING;
-	boot_thread->next = NULL;
-	boot_thread->kernel_stack_base = NULL;
-	boot_thread->page_directory = virtual_memory_manager_get_kernel_pml4();
+	boot_proc->id = 0;
+	boot_proc->state = PROCESS_RUNNING;
+	boot_proc->next = NULL;
+	boot_proc->kernel_stack_base = NULL;
+	boot_proc->page_directory = virtual_memory_manager_get_kernel_pml4();
 
-	current_thread = boot_thread;
+	current_process = boot_proc;
 
 	static uint8_t idle_kstack[16384] __attribute__((aligned(16)));
 	void* kstack_idle_virtual = idle_kstack;
 
 	uint64_t tcb_idle_physical = physical_memory_manager_alloc_page();
-	idle_thread = (thread_t*)physical_to_virtual(tcb_idle_physical);
+	idle_process = (process_t*)physical_to_virtual(tcb_idle_physical);
 
-	idle_thread->id = 0xFFFFFFFF;
-	idle_thread->state = THREAD_READY;
-	idle_thread->next = NULL;
-	idle_thread->kernel_stack_base = kstack_idle_virtual;
-	idle_thread->page_directory = virtual_memory_manager_get_kernel_pml4();
+	idle_process->id = 0xFFFFFFFF;
+	idle_process->state = PROCESS_READY;
+	idle_process->next = NULL;
+	idle_process->kernel_stack_base = kstack_idle_virtual;
+	idle_process->page_directory = virtual_memory_manager_get_kernel_pml4();
 
 	cpu_registers_t* ctx = (cpu_registers_t*)((uintptr_t)kstack_idle_virtual + 16384 - sizeof(cpu_registers_t));
 
@@ -323,9 +323,9 @@ void scheduler_init(void)
 	ctx->r8 = ctx->r9 = ctx->r10 = ctx->r11 = 0;
 	ctx->r12 = ctx->r13 = ctx->r14 = ctx->r15 = 0;
 
-	idle_thread->context = ctx;
+	idle_process->context = ctx;
 
-	boot_thread->fds = fd_table_create_default();
+	boot_proc->fds = fd_table_create_default();
 
 	serial_write("Scheduler initialized!\r\n");
 }

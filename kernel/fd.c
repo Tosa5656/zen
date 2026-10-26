@@ -6,7 +6,7 @@
 
 static spinlock_t fd_current_lock = {0};
 static fd_table_t* kernel_table = NULL;
-static thread_t* fd_wait_head = NULL;
+static process_t* fd_wait_head = NULL;
 
 static void handle_free(vfs_fd_t* handle)
 {
@@ -103,21 +103,21 @@ void fd_table_destroy(fd_table_t* table)
 
 fd_table_t* fd_table_current(void)
 {
-	thread_t* thread = current_thread;
+	process_t* process = current_process;
 
-	if (thread != NULL && thread->fds != NULL)
+	if (process != NULL && process->fds != NULL)
 	{
-		return (fd_table_t*)thread->fds;
+		return (fd_table_t*)process->fds;
 	}
 
 	spin_lock(&fd_current_lock);
 
-	if (thread != NULL && thread->fds == NULL)
+	if (process != NULL && process->fds == NULL)
 	{
-		thread->fds = fd_table_create_default();
+		process->fds = fd_table_create_default();
 	}
 
-	fd_table_t* table = (thread != NULL) ? (fd_table_t*)thread->fds : NULL;
+	fd_table_t* table = (process != NULL) ? (fd_table_t*)process->fds : NULL;
 
 	if (table == NULL)
 	{
@@ -545,36 +545,36 @@ int fd_seek(int fd, int64_t offset, int whence)
 	return result;
 }
 
-void fd_wait_add(thread_t* thread)
+void fd_wait_add(process_t* process)
 {
-	if (thread == NULL)
+	if (process == NULL)
 	{
 		return;
 	}
 
 	uint64_t flags = irq_save();
 
-	thread->wait_next = fd_wait_head;
-	fd_wait_head = thread;
+	process->wait_next = fd_wait_head;
+	fd_wait_head = process;
 
 	irq_restore(flags);
 }
 
-void fd_wait_remove(thread_t* thread)
+void fd_wait_remove(process_t* process)
 {
-	if (thread == NULL)
+	if (process == NULL)
 	{
 		return;
 	}
 
 	uint64_t flags = irq_save();
 
-	thread_t* previous = NULL;
-	thread_t* current = fd_wait_head;
+	process_t* previous = NULL;
+	process_t* current = fd_wait_head;
 
 	while (current != NULL)
 	{
-		if (current == thread)
+		if (current == process)
 		{
 			if (previous == NULL)
 			{
@@ -598,15 +598,15 @@ void fd_wait_wake_all(void)
 {
 	uint64_t flags = irq_save();
 
-	thread_t* thread = fd_wait_head;
+	process_t* process = fd_wait_head;
 	fd_wait_head = NULL;
 
-	while (thread != NULL)
+	while (process != NULL)
 	{
-		thread_t* next = thread->wait_next;
-		thread->wait_next = NULL;
-		scheduler_wake(thread);
-		thread = next;
+		process_t* next = process->wait_next;
+		process->wait_next = NULL;
+		scheduler_wake(process);
+		process = next;
 	}
 
 	irq_restore(flags);

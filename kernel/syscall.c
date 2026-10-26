@@ -46,7 +46,7 @@ static uint32_t sys_open_access(uint64_t flags)
 
 extern void syscall_entry(void);
 extern __attribute__((noreturn)) void context_iretq(uint64_t *frame);
-extern thread_t* current_thread;
+extern process_t* current_process;
 extern volatile uint64_t system_ticks;
 
 typedef uint64_t (*syscall_fn_t)(cpu_registers_t *registers);
@@ -130,7 +130,7 @@ static uint64_t sys_read(cpu_registers_t *registers)
 		return got;
 	}
 
-	thread_t* self = current_thread;
+	process_t* self = current_process;
 	if (self == NULL)
 	{
 		return (uint64_t)-1;
@@ -140,7 +140,7 @@ static uint64_t sys_read(cpu_registers_t *registers)
 
 	self->blocked_rip = registers->rip;
 	self->blocked_rax = registers->rax;
-	self->state = THREAD_BLOCKED;
+	self->state = PROCESS_BLOCKED;
 	fd_wait_add(self);
 
 	uint64_t again = fd_read(fd, buf, count);
@@ -148,7 +148,7 @@ static uint64_t sys_read(cpu_registers_t *registers)
 	if (again != FD_WOULD_BLOCK)
 	{
 		fd_wait_remove(self);
-		self->state = THREAD_RUNNING;
+		self->state = PROCESS_RUNNING;
 		self->blocked_rip = 0;
 		__asm__ volatile("sti");
 		return again;
@@ -252,7 +252,7 @@ static void sys_brk_release_page(uint64_t pml4_physical, uint64_t page)
 	physical_memory_manager_free_page(physical);
 }
 
-static uint64_t sys_brk_reserve_pages(thread_t* self, uint64_t from, uint64_t to)
+static uint64_t sys_brk_reserve_pages(process_t* self, uint64_t from, uint64_t to)
 {
 	for (uint64_t page = from; page < to; page += PAGE_SIZE)
 	{
@@ -284,7 +284,7 @@ static uint64_t sys_brk_reserve_pages(thread_t* self, uint64_t from, uint64_t to
 static uint64_t sys_brk(cpu_registers_t* registers)
 {
 	uint64_t requested = registers->rdi;
-	thread_t* self = current_thread;
+	process_t* self = current_process;
 
 	if (self == NULL || self->page_directory == 0 || self->brk_start == 0)
 	{
@@ -429,15 +429,15 @@ static uint64_t sys_nanosleep(cpu_registers_t *registers)
 
 	__asm__ volatile("cli");
 
-	current_thread->sleep_until_ticks = system_ticks + ticks_to_sleep;
+	current_process->sleep_until_ticks = system_ticks + ticks_to_sleep;
 	serial_write("nanosleep: sleeping until tick ");
-	serial_dec(current_thread->sleep_until_ticks);
+	serial_dec(current_process->sleep_until_ticks);
 	serial_write(" (now ");
 	serial_dec(system_ticks);
 	serial_write(")\r\n");
 
-	extern void scheduler_sleep_enqueue(thread_t* thread);
-	scheduler_sleep_enqueue(current_thread);
+	extern void scheduler_sleep_enqueue(process_t* process);
+	scheduler_sleep_enqueue(current_process);
 
 	extern void yield_iretq(uint64_t new_rsp);
 	uint64_t new_rsp = schedule_callback((uint64_t)registers);
@@ -450,20 +450,20 @@ static uint64_t sys_exit(cpu_registers_t *registers)
 	uint64_t code = registers->rdi;
 
 	serial_write("Process ");
-	serial_dec(current_thread->id);
+	serial_dec(current_process->id);
 	serial_write(" exited with code: ");
 	serial_dec(code);
 	serial_write("\r\n");
 
 	__asm__ volatile("cli");
 
-	uint64_t user_pml4 = current_thread->page_directory;
+	uint64_t user_pml4 = current_process->page_directory;
 	virtual_memory_manager_destroy_address_space(user_pml4);
 
 	virtual_memory_manager_switch_address_space(virtual_memory_manager_get_kernel_pml4());
 
-	extern void scheduler_kill_current_thread(void);
-	scheduler_kill_current_thread();
+	extern void process_kill_current(void);
+	process_kill_current();
 
 	uint64_t new_rsp = schedule_callback((uint64_t)registers);
 

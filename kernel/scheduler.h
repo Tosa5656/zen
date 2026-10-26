@@ -8,41 +8,41 @@
 
 typedef enum
 {
-	THREAD_READY,
-	THREAD_RUNNING,
-	THREAD_BLOCKED,
-	THREAD_DEAD
-} thread_state_t;
+	PROCESS_READY,
+	PROCESS_RUNNING,
+	PROCESS_BLOCKED,
+	PROCESS_DEAD
+} process_state_t;
 
-typedef struct thread
+typedef struct process
 {
 	cpu_registers_t* context;
 	void* kernel_stack_base;
 	uint64_t page_directory;
 	struct fd_table* fds;
 	uint64_t id;
-	thread_state_t state;
+	process_state_t state;
 	uint64_t sleep_until_ticks;
 	uint64_t blocked_rip;
 	uint64_t blocked_rax;
-	struct thread* next;
-	struct thread* wait_next;
+	struct process* next;
+	struct process* wait_next;
 	uint64_t brk_start;
 	uint64_t program_break;
-} thread_t;
+} process_t;
 
 void scheduler_init(void);
-void scheduler_enqueue(thread_t* thread);
-thread_t* scheduler_dequeue(void);
-void scheduler_wake(thread_t* thread);
-thread_t* scheduler_create_user_thread(void* entry_point, uint64_t pml4_physical, uint64_t user_rsp);
+void scheduler_enqueue(process_t* process);
+process_t* scheduler_dequeue(void);
+void scheduler_wake(process_t* process);
+process_t* process_create_user(void* entry_point, uint64_t pml4_physical, uint64_t user_rsp);
 uint64_t schedule_callback(uint64_t old_rsp);
 bool scheduler_should_switch(void);
-void scheduler_sleep_enqueue(thread_t* thread);
-void scheduler_check_sleeping_threads(void);
-void scheduler_kill_current_thread(void);
-void scheduler_reclaim_dead_threads(void);
+void scheduler_sleep_enqueue(process_t* process);
+void scheduler_check_sleeping(void);
+void process_kill_current(void);
+void process_reclaim_dead(void);
 
-extern thread_t* current_thread;
+extern process_t* current_process;
 
 #endif
