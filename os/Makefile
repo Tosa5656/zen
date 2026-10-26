@@ -1,7 +1,7 @@
 CC=x86_64-elf-gcc
 LD=x86_64-elf-ld
 AS=nasm
-CFLAGS=-ffreestanding -nostdlib -I../zlibc/include
+CFLAGS=-ffreestanding -nostdlib -I../zlibc/include -Wl,-no-pie
 ASFLAGS=-f elf64
 
 LIBC=../zlibc/libc.a
